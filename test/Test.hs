@@ -1,22 +1,29 @@
 import KTable
 
-import Test.QuickCheck.Batch
+import Test.QuickCheck.Parallel
+--import Test.QuickCheck.Batch
 import Test.QuickCheck
 
 import qualified Data.Sequence as S
 import qualified Data.Foldable as F
 import Data.List(nub)
 
-options = TestOptions
-  { no_of_tests         = 50
-  , length_of_tests     = 0
-  , debug_tests         = False }
+-- options = TestOptions
+--   { no_of_tests         = 50
+--   , length_of_tests     = 0
+--   , debug_tests         = False }
+-- 
+-- main =
+--   runTests "ktree" options
+--     [ run prop_max_k_bucket
+--     , run prop_all_proper_bits
+--     , run prop_no_duplicates ]
 
-main =
-  runTests "ktree" options
-    [ run prop_max_k_bucket
-    , run prop_all_proper_bits
-    , run prop_no_duplicates ]
+
+main = do
+  pRun 2 50 [ ("buckets max", pDet prop_max_k_bucket)
+            , ("buckets bits position", pDet prop_all_proper_bits)
+            , ("no duplicate", pDet prop_no_duplicates) ]
 
 --
 -- Quickcheck definitions and property checkers for KTree
