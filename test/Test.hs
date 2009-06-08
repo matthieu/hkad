@@ -41,8 +41,18 @@ instance Arbitrary KTree where
 
 treeBuild 0 = return $ kbleaf S.empty
 treeBuild n = do t <- treeBuild (n-1)
-                 v <- choose (0, 2^binaries-1) :: Gen Integer
+                 v <- arbitrary
                  return $ kinsert 0 t v
+
+instance Arbitrary Char where
+  arbitrary = elements (['A'..'Z'] ++ ['a' .. 'z'])
+
+instance Arbitrary Peer where
+  arbitrary = do
+    host <- arbitrary :: Gen String
+    port <- arbitrary :: Gen String
+    nid  <- choose (0, 2^binaries-1) :: Gen Integer
+    return $ Peer host port nid
 
 -- Checks that all buckets have k or less elements
 prop_max_k_bucket (KNode l r) = prop_max_k_bucket l && prop_max_k_bucket r
@@ -63,13 +73,13 @@ prop_no_duplicates (KLeaf (KBucket s)) = nub sl == sl
   where sl = F.toList s
 
 -- Checks that kclosest finds a least k nodes
-prop_kclosest_k:: KTree -> Integer -> Bool
-prop_kclosest_k kt nid = let kc = kclosest kt nid
+prop_kclosest_k kt peer = let kc = kclosest kt (nodeId peer)
                          in length kc >= kdepth || length kc == ktreeSize kt
 
 -- Checks kclosest are actually close to pivot
-prop_kclosest_close kt nid = all (\x -> x `xor` nid > kmaxDist || x `elem` kc) $ allNodes kt
-  where kmaxDist = maximum $ map (xor nid) kc
+prop_kclosest_close kt peer = all (\x -> (nodeId x) `xor` nid > kmaxDist || x `elem` kc) $ allNodes kt
+  where kmaxDist = maximum $ map (xor nid . nodeId) kc
         allNodes (KNode l r) = allNodes l ++ allNodes r
         allNodes (KLeaf kb) = bucketToList kb
-        kc = kclosest kt nid
+        kc  = kclosest kt nid
+        nid = nodeId peer

@@ -1,7 +1,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-} 
 
 module KTable
-  ( KBucket(..), KTree(..), kinsert, kclosest, ktreeSize,
+  ( KBucket(..), KTree(..), Peer(..), kinsert, kclosest, ktreeSize,
     kbleaf, binaries, kdepth, nxor, bucketLength, bucketAll, bucketToList
   ) where
 
@@ -21,7 +21,13 @@ binaries = 160
 
 -- Data types and helper functions
 --
-newtype KBucket = KBucket (S.Seq Integer)
+data Peer = Peer { host:: String, port:: String, nodeId:: Integer }
+  deriving Show
+
+instance Eq Peer where
+  p1 == p2 = nodeId p1 == nodeId p2
+
+newtype KBucket = KBucket (S.Seq Peer)
   deriving (Show, Eq)
 
 data KTree = KNode { leftKTree:: KTree, rightKTree:: KTree }
@@ -33,30 +39,32 @@ kbleaf = KLeaf . KBucket
 bucketInsert (KBucket seq) val = KBucket (seq S.|> val)
 bucketElem (KBucket seq) val = F.elem val seq
 bucketLength (KBucket seq) = S.length seq
-bucketAll fn (KBucket seq) = F.all fn seq
+bucketAll fn (KBucket seq) = F.all (\p -> fn $ nodeId p) seq
 bucketToList (KBucket seq) = F.toList seq
 
 -- Sets common bits to 0 and differing bits to 1
 --   ex: 101110 `xor` 100101 = 001011
 nxor a b = (a .|. b) `xor` (a .&. b)
 
--- Inserts the provided node id in the routing table
+-- Inserts the provided peer in the routing table
 --
-kinsert pivot kt nid = update_closest_bucket kt nid insertOrSplit
+kinsert pivot kt peer = update_closest_bucket kt nid insertOrSplit
   where 
     insertOrSplit pos kb =
-      if bucketElem kb nid
+      if bucketElem kb peer
         then KLeaf kb
         else if bucketLength kb < kdepth
-               then KLeaf $ bucketInsert kb nid
+               then KLeaf $ bucketInsert kb peer
                else if pos == 0 || (nid `nxor` pivot > 2 ^ (pos+1))
                       then KLeaf kb
                       else traverseKTree KNode KNode pos (splitBucket kb pos) nid insertOrSplit
 
     splitBucket (KBucket seq) pos = pairToNode $ F.foldl separateVals (S.empty,S.empty) seq
-      where separateVals (lseq, rseq) v =
-              if testBit v pos then (lseq, rseq S.|> v) else (lseq S.|> v, rseq)
+      where separateVals (lseq, rseq) p =
+              if testBit (nodeId p) pos then (lseq, rseq S.|> p) else (lseq S.|> p, rseq)
             pairToNode (lseq, rseq) = KNode (kbleaf lseq) (kbleaf rseq)
+
+    nid = nodeId peer
 
 -- Finds at least k nodes closest to the provided id in the routing table. 
 --
@@ -78,8 +86,8 @@ kclosest kt nid = with_closest_bucket kt nid (returnOrRewind [] nid)
       if pos >= binaries
         then karr
         else if (nid .&. 2^pos) `nxor` (mid .&. 2^pos) > 0
-               then {-trace ("rew " ++ show pos) $ -} rewind karr mid (pos+1)
-               else {-trace ("close " ++ show pos) $ -} with_closest_bucket kt newmid (returnOrRewind karr newmid)
+               then rewind karr mid (pos+1)
+               else with_closest_bucket kt newmid (returnOrRewind karr newmid)
       where newmid = mid `xor` 2^pos
 
 -- Finds the closest bucket to an id and apply the provided transformation 
