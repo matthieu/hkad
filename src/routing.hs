@@ -25,7 +25,9 @@ data Peer = Peer { host:: String, port:: String, nodeId:: Integer }
   deriving Show
 
 instance Eq Peer where
-  p1 == p2 = nodeId p1 == nodeId p2
+  p1 == p2 = if nodeId p1 /= -1 && nodeId p2 /= -1 
+               then nodeId p1 == nodeId p2
+               else host p1 == host p2 && port p1 == port p2
 
 newtype KBucket = KBucket (S.Seq Peer)
   deriving (Show, Eq)
@@ -46,7 +48,7 @@ bucketToList (KBucket seq) = F.toList seq
 --   ex: 101110 `xor` 100101 = 001011
 nxor a b = (a .|. b) `xor` (a .&. b)
 
--- Inserts the provided peer in the routing table
+-- Inserts the provided peer in the node tree
 --
 kinsert pivot kt peer = update_closest_bucket kt nid insertOrSplit
   where 
@@ -56,7 +58,7 @@ kinsert pivot kt peer = update_closest_bucket kt nid insertOrSplit
         else if bucketLength kb < kdepth
                then KLeaf $ bucketInsert kb peer
                else if pos == 0 || (nid `nxor` pivot > 2 ^ (pos+1))
-                      then KLeaf kb
+                      then KLeaf kb -- TODO before dropping it, check that it wouldn't be a good replacement for one of the existing bucket node
                       else traverseKTree KNode KNode pos (splitBucket kb pos) nid insertOrSplit
 
     splitBucket (KBucket seq) pos = pairToNode $ F.foldl separateVals (S.empty,S.empty) seq
@@ -66,7 +68,7 @@ kinsert pivot kt peer = update_closest_bucket kt nid insertOrSplit
 
     nid = nodeId peer
 
--- Finds at least k nodes closest to the provided id in the routing table. 
+-- Finds at least k nodes closest to the provided id in the node tree
 --
 kclosest kt nid = with_closest_bucket kt nid (returnOrRewind [] nid)
   where
