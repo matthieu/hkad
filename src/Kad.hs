@@ -1,6 +1,5 @@
-
 module Kad 
-  ( nodeLookup    
+  ( nodeLookup, nodeLookupReceive, nodeLookupCallback
   ) where
 
 import qualified Data.Map as M
@@ -26,6 +25,19 @@ nodeLookup nid = do
   newRunningLookup rs ps uid
   sendLookup ps nid uid
   return ()
+
+-- Received a node lookup request, queries the KTable for the k closest and
+-- sens the information back.
+nodeLookupReceive:: Integer -> Peer -> Word64 -> ServerState ()
+nodeLookupReceive nid peer msgId = do
+  ktree <- readKTree
+  let close = kclosest ktree nid
+  sendLookupReply peer close msgId
+
+-- Received the result of a node lookup request, stores the k nodes received
+-- and updates the status of the node lookup.
+nodeLookupCallback:: Peer -> [Peer] -> ServerState()
+nodeLookupCallback peer nodes = return ()
 
 -- Pick the "best" alpha nodes out of the k selected for lookup. For now we only
 -- select the 3 last ones but it would be the right place to plug in Vivaldi

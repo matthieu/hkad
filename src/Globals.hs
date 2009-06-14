@@ -19,7 +19,7 @@ import KTable
 
 type RoutingTable = M.Map Word64 WaitingReply
 
-data KadOp = UnknownOp | NodeLookupOp | PingOp
+data KadOp = UnknownOp | NodeLookupOp | NodeLookupReplyOp | PingOp | PingReplyOp
   deriving (Show, Eq)
 
 data WaitingReply = WaitingReply { waitFromPeer:: Peer,  waitOp:: KadOp, waitOpUid:: Word64 }
@@ -63,11 +63,16 @@ newWaitingReply peer op msgId opId = do
   rt <- askRoutingT
   liftIO . atomically $ modifyTVar rt (M.insert msgId $ WaitingReply peer op opId)
 
+waitingReply:: Word64 -> KadOp -> Peer -> ServerState (Maybe Word64)
 waitingReply msgId op peer = do
-  rt <- readRoutingT
-  case M.lookup msgId rt of
-    Nothing -> return Nothing
-    Just wr -> return $ if waitFromPeer wr == peer && waitOp wr == op then Just (waitOpUid wr) else Nothing
+  trt <- askRoutingT
+  liftIO . atomically $ do 
+    rt  <- readTVar trt
+    case M.lookup msgId rt of
+      Nothing -> return Nothing
+      Just wr -> do
+        modifyTVar trt $ M.delete msgId
+        return $ if waitFromPeer wr == peer && waitOp wr == op then Just (waitOpUid wr) else Nothing 
 
 newUid:: IO Word64
 newUid = liftM fromInteger $ randomRIO (0, 2^64 - 1)
