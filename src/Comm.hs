@@ -1,14 +1,16 @@
 module Comm
-  ( KadOp(..), sendLookup, sendLookupReply, newUid, parseHeader,
+  ( KadOp(..), sendLookup, sendLookupReply, newUid, parseHeader, localServer, serverDispatch, tunnel
   ) where
 
 import Network.Socket
 import Network.BSD
+import Control.Concurrent(forkIO)
 
 import Data.Word
 import Data.List (genericDrop,unfoldr,intercalate)
 import Data.Char(chr,ord)
 import Control.Monad(forM, ap, liftM)
+import Control.Monad.Reader
 import Control.Monad.State
 
 import KTable
@@ -34,21 +36,21 @@ data Header = Header { msgVersion ::Int, msgOp ::KadOp, msgUid ::Word64 }
 -- operation itself is tracked by a secondary id stored locally.
 sendLookup peers nid lookupId = forM peers (\p -> do 
   msgId <- liftIO newUid
-  msg   <- buildLookupMsg nid msgId
+  let msg = buildLookupMsg nid msgId
   newWaitingReply p NodeLookupOp msgId lookupId
   liftIO $ sendToPeer msg p )
 
   where buildLookupMsg nid msgId = 
-          liftM (++ toCharArray nid 160) $ buildHeader NodeLookupOp msgId
+          buildHeader NodeLookupOp msgId ++ toCharArray nid 160
 
 -- Sends the reply to a node lookup query, sending k nodes and reproducing the
 -- received message id.
 sendLookupReply peer nodes msgId = do
-  msg <- buildLookupReplyMsg nodes msgId
+  let msg = buildLookupReplyMsg nodes msgId
   liftIO $ sendToPeer msg peer
 
   where buildLookupReplyMsg nodes msgId = 
-          liftM (++ serPeers nodes) $ buildHeader NodeLookupOp msgId
+          buildHeader NodeLookupOp msgId ++ serPeers nodes
 
 sendToPeer msg peer = do
   phandle <- openPeerHandle (host peer) (port peer)
@@ -109,12 +111,19 @@ parseHeader msg = runState parseHeader' msg
           put r
           return $ fn v
 
-localServer port handlerFn = withSocketsDo $ do
-  addrinfos <- getAddrInfo (Just (defaultHints {addrFlags = [AI_PASSIVE]})) Nothing (Just port)
-  let serveraddr = head addrinfos
-  sock <- socket (addrFamily serveraddr) Datagram defaultProtocol
-  bindSocket sock (addrAddress serveraddr)
-  procMessages sock
+tunnel :: (SockAddr -> String -> ServerState ()) -> ((SockAddr -> String -> IO ()) -> IO ()) -> ServerState ()
+tunnel f k = do
+  (rt, rot, kt, lid) <- ask
+  liftIO (k (\sock msg -> runServer rt rot kt lid (f sock msg)))
+
+localServer port handlerFn = do
+  forkIO . withSocketsDo $ do
+    addrinfos <- getAddrInfo (Just (defaultHints {addrFlags = [AI_PASSIVE]})) Nothing (Just port)
+    let serveraddr = head addrinfos
+    sock <- socket (addrFamily serveraddr) Datagram defaultProtocol
+    bindSocket sock (addrAddress serveraddr)
+    procMessages sock
+  return ()
 
   -- Loops forever processing incoming data
   where procMessages sock = do
@@ -125,19 +134,16 @@ localServer port handlerFn = withSocketsDo $ do
 -- Utility functions to serialize messages
 --
 
-buildHeader optype msgId = do
-  return $ buildHeader' msgId optype
-
-  where buildHeader':: (Integral a) => a -> KadOp -> String
-        buildHeader' uid optype = (chr 1) : optypeStr : toCharArray uid 64
-        optypeStr = case optype of
+buildHeader:: KadOp -> Word64 -> String
+buildHeader optype msgId = (chr 1) : optypeStr : toCharArray (toInteger msgId) 64
+  where optypeStr = case optype of
                       PingOp            -> chr 1
                       PingReplyOp       -> chr 2
                       NodeLookupOp      -> chr 3
                       NodeLookupReplyOp -> chr 4
 
-toCharArray:: (Integral a) => a -> Int -> [Char]
-toCharArray num depth = map chr (toBytes num depth)
+toCharArray:: Integer -> Int -> [Char]
+toCharArray num depth = map (chr . fromInteger) (toBytes num $ toInteger depth)
 
 -- Converts a string to its numeric value by considering that each character is a
 -- byte in a n byte number
@@ -161,10 +167,10 @@ split delim s
 
 -- Decomposes a number into its successive byte values or, said differently, converts
 -- a number to base 2^8.
-toBytes :: (Integral t, Integral a) => a -> t -> [Int]
+toBytes :: Integer -> Integer -> [Integer]
 toBytes num depth = unfoldr byteMod (num,depth)
   where byteMod (num,exp) = let (d,m) = divMod num (2^exp)
-                            in if exp < 0 then Nothing else Just (fromIntegral d ::Int, (m,exp-8))
+                            in if exp < 0 then Nothing else Just (d, (m,exp-8))
 
 toPeer addr = do
   case addr of
@@ -180,11 +186,3 @@ openPeerHandle hostname port = do
 
 closePeerHandle phandle = sClose (pSocket phandle)
 
--- main = do
---   params <- getArgs
---   if head params == "client"
---     then do    
---       ph <- openPeerHandle "localhost" "10000"
---       sendPing ph
---       closePeerHandle ph
---     else localServer "10000" (\addr msg -> putStrLn $ msg ++ " / " ++ (show addr))

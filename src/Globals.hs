@@ -2,9 +2,9 @@
 {-# LANGUAGE NoMonomorphismRestriction #-} 
 
 module Globals (
-    RunningOps(..), ServerState,KadOp(..),
+    RunningOps(..), ServerState, KadOp(..),
     runServer, askRoutingT, askRunningOpsT, askKTree, readKTree,
-    newRunningLookup, runningLookup, newWaitingReply, waitingReply, newUid,
+    newRunningLookup, runningLookup, newWaitingReply, waitingReply, newUid, insertInKTree,
     modifyTVar
   ) where
 
@@ -28,17 +28,18 @@ type RunningOpsTable = M.Map Word64 RunningOps
 
 data RunningOps = RunningLookup { remaining:: [Peer], pending:: [Peer], queried:: [Peer], closest:: [Peer] }
 
-type GlobalData = (TVar RoutingTable, TVar RunningOpsTable, TVar KTree)
+type GlobalData = (TVar RoutingTable, TVar RunningOpsTable, TVar KTree, Integer)
 
 newtype ServerState a = ServerState {
   runSS:: ReaderT GlobalData IO a 
 } deriving (Monad, MonadIO, MonadReader GlobalData)
 
-runServer rt rot kt st = runReaderT (runSS st) (rt, rot, kt)
+runServer rt rot kt localId st = runReaderT (runSS st) (rt, rot, kt, localId)
 
-askRoutingT = do { (rt, rot, kt) <- ask; return rt }
-askRunningOpsT = do { (rt, rot, kt) <- ask; return rot }
-askKTree = do { (rt, rot, kt) <- ask; return kt }
+askRoutingT = do { (rt, rot, kt, lid) <- ask; return rt }
+askRunningOpsT = do { (rt, rot, kt, lid) <- ask; return rot }
+askKTree = do { (rt, rot, kt, lid) <- ask; return kt }
+askLocalId = do { (rt, rot, kt, lid) <- ask; return lid }
 
 readRoutingT = do { rt <- askRoutingT; liftIO . atomically $ readTVar rt }
 readRunningOpsT = do { rot <- askRunningOpsT; liftIO . atomically $ readTVar rot }
@@ -73,6 +74,11 @@ waitingReply msgId op peer = do
       Just wr -> do
         modifyTVar trt $ M.delete msgId
         return $ if waitFromPeer wr == peer && waitOp wr == op then Just (waitOpUid wr) else Nothing 
+
+insertInKTree peer = do
+  kt  <- askKTree
+  lid <- askLocalId
+  liftIO . atomically $ modifyTVar kt (flip (kinsert lid) $ peer)
 
 newUid:: IO Word64
 newUid = liftM fromInteger $ randomRIO (0, 2^64 - 1)
