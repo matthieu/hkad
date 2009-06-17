@@ -3,7 +3,7 @@
 
 module Globals (
     RunningOps(..), ServerState, KadOp(..),
-    runServer, askRoutingT, askRunningOpsT, askKTree, readKTree,
+    runServer, askRoutingT, askRunningOpsT, askKTree, readKTree, askLocalId,
     newRunningLookup, runningLookup, newWaitingReply, waitingReply, newUid, insertInKTree,
     modifyTVar
   ) where
@@ -28,7 +28,7 @@ type RunningOpsTable = M.Map Word64 RunningOps
 
 data RunningOps = RunningLookup { remaining:: [Peer], pending:: [Peer], queried:: [Peer], closest:: [Peer] }
 
-type GlobalData = (TVar RoutingTable, TVar RunningOpsTable, TVar KTree, Integer)
+type GlobalData = (TVar RoutingTable, TVar RunningOpsTable, TVar KTree, Peer)
 
 newtype ServerState a = ServerState {
   runSS:: ReaderT GlobalData IO a 
@@ -78,7 +78,7 @@ waitingReply msgId op peer = do
 insertInKTree peer = do
   kt  <- askKTree
   lid <- askLocalId
-  liftIO . atomically $ modifyTVar kt (flip (kinsert lid) $ peer)
+  liftIO . atomically $ modifyTVar kt (flip (kinsert $ nodeId lid) $ peer)
 
 newUid:: IO Word64
 newUid = liftM fromInteger $ randomRIO (0, 2^64 - 1)

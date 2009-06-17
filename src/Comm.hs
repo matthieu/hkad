@@ -12,6 +12,7 @@ import Data.Char(chr,ord)
 import Control.Monad(forM, ap, liftM)
 import Control.Monad.Reader
 import Control.Monad.State
+import Debug.Trace
 
 import KTable
 import Globals
@@ -25,7 +26,7 @@ import {-# SOURCE #-} Kad(nodeLookupReceive, nodeLookupCallback)
 
 data PeerHandle = PeerHandle { pSocket :: Socket, pAddress :: SockAddr }
 
-data Header = Header { msgVersion ::Int, msgOp ::KadOp, msgUid ::Word64 }
+data Header = Header { msgVersion ::Int, msgOp ::KadOp, msgUid ::Word64, sender ::Peer }
   deriving Show
 
 --
@@ -36,21 +37,23 @@ data Header = Header { msgVersion ::Int, msgOp ::KadOp, msgUid ::Word64 }
 -- operation itself is tracked by a secondary id stored locally.
 sendLookup peers nid lookupId = forM peers (\p -> do 
   msgId <- liftIO newUid
-  let msg = buildLookupMsg nid msgId
+  me    <- askLocalId
+  let msg = buildLookupMsg nid msgId me
   newWaitingReply p NodeLookupOp msgId lookupId
   liftIO $ sendToPeer msg p )
 
-  where buildLookupMsg nid msgId = 
-          buildHeader NodeLookupOp msgId ++ toCharArray nid 160
+  where buildLookupMsg nid msgId me = 
+          buildHeader NodeLookupOp msgId me ++ toCharArray nid 160
 
 -- Sends the reply to a node lookup query, sending k nodes and reproducing the
 -- received message id.
 sendLookupReply peer nodes msgId = do
-  let msg = buildLookupReplyMsg nodes msgId
+  me <- askLocalId
+  let msg = buildLookupReplyMsg nodes msgId me
   liftIO $ sendToPeer msg peer
 
-  where buildLookupReplyMsg nodes msgId = 
-          buildHeader NodeLookupOp msgId ++ serPeers nodes
+  where buildLookupReplyMsg nodes msgId me = 
+          buildHeader NodeLookupOp msgId me ++ serPeers nodes
 
 sendToPeer msg peer = do
   phandle <- openPeerHandle (host peer) (port peer)
@@ -62,12 +65,13 @@ sendToPeer msg peer = do
           sent <- sendTo (pSocket phandle) omsg (pAddress phandle)
           sendstr phandle (genericDrop sent omsg)
 
+--
 -- Server functions to handle calls coming from other nodes
 --
 
 serverDispatch addr msg = do
   let (hdr, rest) = parseHeader msg
-  let peer = toPeer addr
+  let peer = toPeer addr (sender hdr)
   -- ignoring what we can't handle yet
   if msgVersion hdr /= 1
     then return ()
@@ -93,17 +97,23 @@ parseHeader msg = runState parseHeader' msg
           ver  <- parseVersion
           op   <- parseOpType
           uid  <- parseUid
-          return $ Header ver op uid
+          sndr <- parsePeer
+          return $ Header ver op uid sndr
 
         parseVersion = consuming 1 (ord . head)
-        parseOpType = consuming 1 (\x ->
+        parseOpType  = consuming 1 (\x ->
           case head x of
             '\SOH' -> PingOp
             '\STX' -> PingReplyOp
             '\ETX' -> NodeLookupOp
             '\EOT' -> NodeLookupReplyOp
             _      -> UnknownOp )
-        parseUid = consuming 8 fromCharArray
+        parseUid  = consuming 8 fromCharArray
+        parsePeer = do
+          str <- get
+          let (v,r) = span (/=',') str
+          put $ tail r
+          return $ deserPeer v
 
         consuming n fn = do
           str <- get
@@ -134,8 +144,9 @@ localServer port handlerFn = do
 -- Utility functions to serialize messages
 --
 
-buildHeader:: KadOp -> Word64 -> String
-buildHeader optype msgId = (chr 1) : optypeStr : toCharArray (toInteger msgId) 64
+buildHeader:: KadOp -> Word64 -> Peer -> String
+buildHeader optype msgId sender = 
+  (chr 1) : optypeStr : toCharArray (toInteger msgId) 64 ++ serPeer sender ++ ","
   where optypeStr = case optype of
                       PingOp            -> chr 1
                       PingReplyOp       -> chr 2
@@ -172,11 +183,15 @@ toBytes num depth = unfoldr byteMod (num,depth)
   where byteMod (num,exp) = let (d,m) = divMod num (2^exp)
                             in if exp < 0 then Nothing else Just (d, (m,exp-8))
 
-toPeer addr = do
-  case addr of
-    SockAddrInet port host -> Peer (show host) (show port) (-1)
-    SockAddrInet6 port _ host _ -> Peer (show host) (show port) (-1)
-    SockAddrUnix str -> error $ "Dont know how to translate " ++ str
+-- Build a new peer from packet address and header peer info
+toPeer addr pr = let (h,p) = span (/=':') (show addr)
+                 in Peer h (port pr) (nodeId pr)
+
+-- Tried below but host is a Word 32...
+--   case addr of
+--     SockAddrInet port host -> Peer (show host) (show port) (-1)
+--     SockAddrInet6 port _ host _ -> Peer (show host) (show port) (-1)
+--     SockAddrUnix str -> error $ "Dont know how to translate " ++ str
 
 openPeerHandle hostname port = do
   addrinfos <- getAddrInfo Nothing (Just hostname) (Just port)
