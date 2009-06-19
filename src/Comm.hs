@@ -1,5 +1,6 @@
 module Comm
-  ( KadOp(..), sendLookup, sendLookupReply, newUid, parseHeader, localServer, serverDispatch, tunnel
+  ( KadOp(..), sendLookup, sendLookupReply, parseHeader, localServer, serverDispatch, tunnel,
+    toCharArray, fromCharArray
   ) where
 
 import Network.Socket
@@ -37,9 +38,10 @@ data Header = Header { msgVersion ::Int, msgOp ::KadOp, msgUid ::Word64, sender 
 -- operation itself is tracked by a secondary id stored locally.
 sendLookup peers nid lookupId = forM peers (\p -> do 
   msgId <- liftIO newUid
+  trace ("sendLookup msgid " ++ show msgId) (return ())
   me    <- askLocalId
   let msg = buildLookupMsg nid msgId me
-  newWaitingReply p NodeLookupOp msgId lookupId
+  newWaitingReply p NodeLookupReplyOp msgId lookupId
   liftIO $ sendToPeer msg p )
 
   where buildLookupMsg nid msgId me = 
@@ -53,7 +55,7 @@ sendLookupReply peer nodes msgId = do
   liftIO $ sendToPeer msg peer
 
   where buildLookupReplyMsg nodes msgId me = 
-          buildHeader NodeLookupOp msgId me ++ serPeers nodes
+          buildHeader NodeLookupReplyOp msgId me ++ serPeers nodes
 
 sendToPeer msg peer = do
   phandle <- openPeerHandle (host peer) (port peer)
@@ -71,25 +73,31 @@ sendToPeer msg peer = do
 
 serverDispatch addr msg = do
   let (hdr, rest) = parseHeader msg
+  trace (show hdr) (return ())
   let peer = toPeer addr (sender hdr)
+  refreshPeer peer
   -- ignoring what we can't handle yet
   if msgVersion hdr /= 1
     then return ()
     else do wait <- waitingReply (msgUid hdr) (msgOp hdr) peer
+            trace (show wait) (return ())
             case wait of
               Nothing    -> dispatchOp (msgOp hdr) rest peer (msgUid hdr)
               Just opId  -> dispatchReplyOp (msgOp hdr) opId rest peer
 
   where dispatchReplyOp NodeLookupReplyOp opId msg peer = do 
           rl <- runningLookup opId
+          trace ("peers " ++ msg ++ " " ++ (show $ length msg)) (return ())
           case rl of
             Nothing -> return ()
-            Just rl -> nodeLookupCallback peer (deserPeers msg)
+            Just rl -> nodeLookupCallback peer (if length msg > 0 then deserPeers msg else [])
         dispatchReplyOp _ _ _ _  = return ()
 
         dispatchOp NodeLookupOp msg peer msgId = nodeLookupReceive (fromCharArray msg) peer msgId
         dispatchOp _ _ _ _                     = return ()
 
+-- implement refresh logic
+refreshPeer = insertInKTree
 
 -- TODO handle things like empty messages, adding error handling
 parseHeader msg = runState parseHeader' msg
@@ -140,7 +148,8 @@ localServer port handlerFn = do
           (msg, _, addr) <- recvFrom sock 1024
           handlerFn addr msg
           procMessages sock
-                  
+
+
 -- Utility functions to serialize messages
 --
 
@@ -154,13 +163,13 @@ buildHeader optype msgId sender =
                       NodeLookupReplyOp -> chr 4
 
 toCharArray:: Integer -> Int -> [Char]
-toCharArray num depth = map (chr . fromInteger) (toBytes num $ toInteger depth)
+toCharArray num depth = map (chr . fromInteger) (toBytes num $ toInteger (depth-8))
 
 -- Converts a string to its numeric value by considering that each character is a
 -- byte in a n byte number
 fromCharArray :: (Num t) => [Char] -> t
 fromCharArray str = fst $ foldl (\(acc, exp) ch -> 
-  (acc + fromIntegral (ord ch) * 2^exp, exp+1)) (0,0) (reverse str)
+  (acc + fromIntegral (ord ch) * 2^exp, exp+8)) (0,0) (reverse str)
 
 -- Serializes peers
 serPeers ps = intercalate "," $ map serPeer ps

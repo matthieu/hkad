@@ -15,7 +15,7 @@ import Kad
 start myPort otherPort nodeId = do
   tunnel serverDispatch (localServer myPort)
   if read otherPort > 0 
-    then insertInKTree $ Peer "localhost" otherPort (read otherPort)
+    then insertInKTree $ Peer "127.0.0.1" otherPort (read otherPort)
     else return ()
   if nodeId > 0 then nodeLookup nodeId else return ()
   liftIO $ threadDelay (60*1000*1000)
@@ -34,4 +34,4 @@ main = do
   trot <- newTVarIO M.empty
   tkt <- newTVarIO $ kbleaf S.empty
   -- nodeId = port
-  runServer trt trot tkt (Peer "localhost" myPort (read myPort)) (start (params !! 0) (params !! 1) (read $ params !! 2))
+  runServer trt trot tkt (Peer "127.0.0.1" myPort (read myPort)) (start (params !! 0) (params !! 1) (read $ params !! 2))

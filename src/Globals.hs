@@ -14,6 +14,7 @@ import Control.Concurrent.STM
 import System.Random
 
 import qualified Data.Map as M
+import Debug.Trace
 
 import KTable
 
@@ -23,6 +24,7 @@ data KadOp = UnknownOp | NodeLookupOp | NodeLookupReplyOp | PingOp | PingReplyOp
   deriving (Show, Eq)
 
 data WaitingReply = WaitingReply { waitFromPeer:: Peer,  waitOp:: KadOp, waitOpUid:: Word64 }
+  deriving (Show, Eq)
 
 type RunningOpsTable = M.Map Word64 RunningOps
 
