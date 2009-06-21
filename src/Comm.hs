@@ -42,13 +42,14 @@ sendLookup peers nid lookupId = forM peers (\p -> do
   me    <- askLocalId
   let msg = buildLookupMsg nid msgId me
   newWaitingReply p NodeLookupReplyOp msgId lookupId
-  liftIO $ sendToPeer msg p )
+  liftIO $ sendToPeer msg p ) >> return ()
 
   where buildLookupMsg nid msgId me = 
           buildHeader NodeLookupOp msgId me ++ toCharArray nid 160
 
 -- Sends the reply to a node lookup query, sending k nodes and reproducing the
 -- received message id.
+sendLookupReply:: Peer -> [Peer] -> Word64 -> ServerState ()
 sendLookupReply peer nodes msgId = do
   me <- askLocalId
   let msg = buildLookupReplyMsg nodes msgId me
@@ -61,6 +62,7 @@ sendToPeer msg peer = do
   phandle <- openPeerHandle (host peer) (port peer)
   sendstr phandle msg
   closePeerHandle phandle
+  return ()
 
   where sendstr _ [] = return ()
         sendstr phandle omsg = do 
@@ -90,10 +92,10 @@ serverDispatch addr msg = do
           trace ("peers " ++ msg ++ " " ++ (show $ length msg)) (return ())
           case rl of
             Nothing -> return ()
-            Just rl -> nodeLookupCallback peer (if length msg > 0 then deserPeers msg else [])
+            Just rl -> nodeLookupCallback opId peer (if length msg > 0 then deserPeers msg else [])
         dispatchReplyOp _ _ _ _  = return ()
 
-        dispatchOp NodeLookupOp msg peer msgId = nodeLookupReceive (fromCharArray msg) peer msgId
+        dispatchOp NodeLookupOp msg peer msgId = nodeLookupReceive msgId (fromCharArray msg) peer
         dispatchOp _ _ _ _                     = return ()
 
 -- implement refresh logic

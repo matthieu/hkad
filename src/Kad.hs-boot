@@ -6,8 +6,8 @@ import Data.Word
 import KTable
 import Globals
 
-nodeLookupReceive:: Integer -> Peer -> Word64 -> ServerState ()
+nodeLookupReceive:: Word64 -> Integer -> Peer -> ServerState ()
 
-nodeLookupCallback:: Peer -> [Peer] -> ServerState()
+nodeLookupCallback:: Word64 -> Peer -> [Peer] -> ServerState()
 
 nodeLookup:: Integer -> ServerState ()
