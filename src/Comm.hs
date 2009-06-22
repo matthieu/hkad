@@ -19,6 +19,7 @@ import KTable
 import Globals
 import {-# SOURCE #-} Kad(nodeLookupReceive, nodeLookupCallback)
 
+-- TODO shut out nodes that are too chatty
 -- Header: version - 1 byte
 --         optype  - 1 byte
 --         uid     - 8 bytes 

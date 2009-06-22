@@ -1,7 +1,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-} 
 
 module KTable
-  ( KBucket(..), KTree(..), Peer(..), kinsert, kclosest, ktreeSize,
+  ( KBucket(..), KTree(..), Peer(..), kinsert, kclosest, ktreeSize, ktreeList,
     kbleaf, binaries, kdepth, nxor, bucketLength, bucketAll, bucketToList
   ) where
 
@@ -106,6 +106,9 @@ with_closest_bucket = traverseKTree (flip const) const (binaries-1)
 --
 ktreeSize (KNode left right) = ktreeSize left + ktreeSize right
 ktreeSize (KLeaf kb)         = bucketLength kb
+
+ktreeList (KNode left right) = ktreeList left ++ ktreeList right
+ktreeList (KLeaf kb)         = bucketToList kb
 
 -- Goes down the tree by following the provided node id bit track and calls
 -- a provided function once a matching bucket has been found.

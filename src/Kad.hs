@@ -1,5 +1,5 @@
 module Kad 
-  ( nodeLookup, nodeLookupReceive, nodeLookupCallback
+  ( startNode, nodeLookup, nodeLookupReceive, nodeLookupCallback
   ) where
 
 import qualified Data.Map as M
@@ -18,11 +18,19 @@ import KTable
 import Globals
 import Comm
 
--- TODO shut out nodes that are too chatty
-
+-- Global parallelization constant
 alpha = 3
 
-debug = liftIO . debugM "Kad"
+-- Joins the network, knowing one existing peer, by doing a lookup on this
+-- node's id and refreshing all newly created buckets.
+startNode peer =
+  if (read (port peer) > 0)
+    then do
+      insertInKTree peer
+      me <- askLocalId
+      nodeLookup $ nodeId me
+    else return ()
+ -- TODO node refresh on all buckets known at this point (end of 2.3)
 
 -- Initiates a node lookup on the network
 nodeLookup:: Integer -> ServerState ()
@@ -96,4 +104,6 @@ closestNode pivot p1 p2 =
 -- K nodes closest to the pivot by the xor metric
 closestNodes :: Integer -> [Peer] -> [Peer]
 closestNodes pivot = take kdepth . sortBy (closestNode pivot)
+
+debug = liftIO . debugM "Kad"
 
