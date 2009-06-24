@@ -54,7 +54,7 @@ modifyTVar tv f = readTVar tv >>= writeTVar tv . f
 --
 newRunningLookup nid rs ps qs lookupId = do
   rot <- askRunningOpsT
-  let nrl = RunningLookup nid rs ps []
+  let nrl = RunningLookup nid rs ps qs
   liftIO . atomically $ modifyTVar rot (M.insert lookupId nrl)
 
 runningLookup lookupId = do

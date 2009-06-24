@@ -7,9 +7,13 @@ import Network.Socket
 import Network.BSD
 import Control.Concurrent(forkIO)
 
+import Data.Maybe(listToMaybe)
 import Data.Word
 import Data.List (genericDrop,unfoldr,intercalate)
 import Data.Char(chr,ord)
+import Data.Bits
+
+import Control.Arrow(second)
 import Control.Monad(forM, ap, liftM)
 import Control.Monad.Reader
 import Control.Monad.State
@@ -39,7 +43,6 @@ data Header = Header { msgVersion ::Int, msgOp ::KadOp, msgUid ::Word64, sender 
 -- operation itself is tracked by a secondary id stored locally.
 sendLookup peers nid lookupId = forM peers (\p -> do 
   msgId <- liftIO newUid
-  trace ("sendLookup msgid " ++ show msgId) (return ())
   me    <- askLocalId
   let msg = buildLookupMsg nid msgId me
   newWaitingReply p NodeLookupReplyOp msgId lookupId
@@ -76,21 +79,18 @@ sendToPeer msg peer = do
 
 serverDispatch addr msg = do
   let (hdr, rest) = parseHeader msg
-  trace (show hdr) (return ())
   let peer = toPeer addr (sender hdr)
   refreshPeer peer
   -- ignoring what we can't handle yet
   if msgVersion hdr /= 1
     then return ()
     else do wait <- waitingReply (msgUid hdr) (msgOp hdr) peer
-            trace (show wait) (return ())
             case wait of
               Nothing    -> dispatchOp (msgOp hdr) rest peer (msgUid hdr)
               Just opId  -> dispatchReplyOp (msgOp hdr) opId rest peer
 
   where dispatchReplyOp NodeLookupReplyOp opId msg peer = do 
           rl <- runningLookup opId
-          trace ("peers " ++ msg ++ " " ++ (show $ length msg)) (return ())
           case rl of
             Nothing -> return ()
             Just rl -> nodeLookupCallback opId peer (if length msg > 0 then deserPeers msg else [])
@@ -120,11 +120,7 @@ parseHeader msg = runState parseHeader' msg
             '\EOT' -> NodeLookupReplyOp
             _      -> UnknownOp )
         parseUid  = consuming 8 fromCharArray
-        parsePeer = do
-          str <- get
-          let (v,r) = span (/=',') str
-          put $ tail r
-          return $ deserPeer v
+        parsePeer = consuming 26 deserPeer
 
         consuming n fn = do
           str <- get
@@ -158,42 +154,47 @@ localServer port handlerFn = do
 
 buildHeader:: KadOp -> Word64 -> Peer -> String
 buildHeader optype msgId sender = 
-  (chr 1) : optypeStr : toCharArray (toInteger msgId) 64 ++ serPeer sender ++ ","
+  (chr 1) : optypeStr : toCharArray (toInteger msgId) 8 ++ serPeer sender
   where optypeStr = case optype of
                       PingOp            -> chr 1
                       PingReplyOp       -> chr 2
                       NodeLookupOp      -> chr 3
                       NodeLookupReplyOp -> chr 4
 
+-- Convert an integer to a string of n bytes
 toCharArray:: Integer -> Int -> [Char]
-toCharArray num depth = map (chr . fromInteger) (toBytes num $ toInteger (depth-8))
+toCharArray num depth = map (chr . fromInteger) (toBytes num $ toInteger depth)
 
 -- Converts a string to its numeric value by considering that each character is a
 -- byte in a n byte number
-fromCharArray :: (Num t) => [Char] -> t
-fromCharArray str = fst $ foldl (\(acc, exp) ch -> 
-  (acc + fromIntegral (ord ch) * 2^exp, exp+8)) (0,0) (reverse str)
+fromCharArray :: (Bits a) => [Char] -> a
+fromCharArray str = foldl (\acc ch -> shift acc 8 + fromIntegral (ord ch)) 0 str
 
 -- Serializes peers
-serPeers ps = intercalate "," $ map serPeer ps
-serPeer p =  (host p) ++ ":" ++ (port p) ++ ":" ++ toCharArray (nodeId p) 160
+serPeers  = concat . map serPeer
+serPeer p = (serIP $ host p) ++ (serPort $ port p) ++ toCharArray (nodeId p) 20
 
 -- Deserializes peers from message strings using the opposite transformation from ser
-deserPeers = map deserPeer . split ','
-deserPeer = buildPeer . split ':'
-  where buildPeer [h,p,nid] = Peer h p (fromCharArray nid)
+deserPeers = map deserPeer . splitEvery 26
+deserPeer s = 
+  let (h,rest) = splitAt 4 s
+      (p,nid)  = splitAt 2 rest
+  in Peer (deserIP h) (deserPort p) (fromCharArray nid)
 
-split delim s
-  | [] == rest = [token]
-  | otherwise = token : split delim (tail rest)
-  where (token,rest) = span (/=delim) s
+deserIP = intercalate "." . map (show . ord)
+serIP = map (chr . read) . split '.' 
+deserPort = (show ::Int -> String) . fromCharArray
+serPort = (flip toCharArray 2) . read
+
+split delim = unfoldr (\b -> fmap (const . (second $ drop 1) . break (==delim) $ b) . listToMaybe $ b)
+splitEvery n = takeWhile (not . null) . unfoldr (Just . splitAt n)
 
 -- Decomposes a number into its successive byte values or, said differently, converts
 -- a number to base 2^8.
 toBytes :: Integer -> Integer -> [Integer]
-toBytes num depth = unfoldr byteMod (num,depth)
-  where byteMod (num,exp) = let (d,m) = divMod num (2^exp)
-                            in if exp < 0 then Nothing else Just (d, (m,exp-8))
+toBytes num depth = unfoldr byteMod (num,depth-1)
+  where byteMod (num,exp) = let (d,m) = divMod num (2^(exp*8))
+                            in if exp < 0 then Nothing else Just (d, (m,exp-1))
 
 -- Build a new peer from packet address and header peer info
 toPeer addr pr = let (h,p) = span (/=':') (show addr)

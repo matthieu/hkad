@@ -22,12 +22,14 @@ binaries = 160
 -- Data types and helper functions
 --
 data Peer = Peer { host:: String, port:: String, nodeId:: Integer }
-  deriving Show
 
 instance Eq Peer where
   p1 == p2 = if nodeId p1 /= -1 && nodeId p2 /= -1 
                then nodeId p1 == nodeId p2
                else host p1 == host p2 && port p1 == port p2
+
+instance Show Peer where
+  show p = "< " ++ host p ++ " / " ++ port p ++ " / " ++ show (nodeId p) ++ " >"
 
 newtype KBucket = KBucket (S.Seq Peer)
   deriving (Show, Eq)

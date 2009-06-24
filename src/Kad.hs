@@ -4,7 +4,7 @@ module Kad
 
 import qualified Data.Map as M
 import Data.Word
-import Data.List(sortBy, (\\), delete)
+import Data.List(sortBy, (\\), delete, nub)
 import Data.Bits
 
 import Control.Monad(liftM, liftM2, liftM3)
@@ -55,7 +55,6 @@ nodeLookup nid = do
 -- sens the information back.
 nodeLookupReceive:: Word64 -> Integer -> Peer -> ServerState ()
 nodeLookupReceive msgId nid peer = do
-  debug $ "Received a node lookup from peer " ++ show peer ++ " for nid " ++ show nid
   ktree <- readKTree
   let close = kclosest ktree nid
 
@@ -67,25 +66,28 @@ nodeLookupReceive msgId nid peer = do
 -- round or completes.
 -- TODO timer
 -- TODO alpha round fails to find closer node
+-- TODO lookup should be read and written in the same atomically
 nodeLookupCallback:: Word64 -> Peer -> [Peer] -> ServerState()
 nodeLookupCallback opId peer nodes = do
   debug $ "Received a node lookup callback from peer " ++ show peer ++ " with nodes " ++ show nodes
+  me  <- askLocalId
   rlm <- runningLookup opId
   case rlm of
     Nothing -> debug ("Unknown lookup id: " ++ show opId) >> return ()
-    Just rl -> let rest = delete peer $ pending rl
-                   nk   = known rl ++ nodes
-                   nq   = peer : queried rl
+    Just rl -> let fnodes = delete me nodes
+                   rest = delete peer $ pending rl
+                   nk   = nub $ known rl ++ fnodes
+                   nq   = nub $ peer : queried rl
                in do
       -- If we finished an alpha round, initiating a new one or terminating, otherwise
       -- just updating data
       if null $ rest
-        then let nc = closestNodes (lookupNodeId rl) (nk \\ nq)
+        then let nc = closestNodes (lookupNodeId rl) nk \\ nq
                  na = pickAlphaNodes nc
              in if null nc
-                  then debug $ "Done! Closest nodes: " ++ show (take kdepth nk) -- TODO cleanup
+                  then do debug $ "Done! Closest nodes: " ++ show (take kdepth nk) -- TODO cleanup
                   else do
-                    newRunningLookup (lookupNodeId rl) nk nc nq opId
+                    newRunningLookup (lookupNodeId rl) nk na nq opId
                     sendLookup na (lookupNodeId rl) opId
         else newRunningLookup (lookupNodeId rl) nk rest nq opId
 
@@ -98,12 +100,12 @@ pickAlphaNodes kc =
 
 closestNode pivot p1 p2 = 
   let d1 = nodeId p1 `xor` pivot
-      d2 = nodeId p1 `xor` pivot
+      d2 = nodeId p2 `xor` pivot
   in compare d1 d2
 
 -- K nodes closest to the pivot by the xor metric
 closestNodes :: Integer -> [Peer] -> [Peer]
 closestNodes pivot = take kdepth . sortBy (closestNode pivot)
 
-debug = liftIO . debugM "Kad"
+debug s = liftM ((++ " " ++ s) . show . nodeId) askLocalId >>= liftIO . debugM "Kad"
 
