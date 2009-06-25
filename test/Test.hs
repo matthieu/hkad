@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeSynonymInstances #-} 
+
 import KTable
 
 import Test.QuickCheck.Parallel
@@ -26,7 +28,7 @@ import Debug.Trace
 
 main = do
   t <- randomRIO (0,100000)
-  pRun t 100 [ ("buckets max", pDet prop_max_k_bucket)
+  pRun t 100 [("buckets max", pDet prop_max_k_bucket)
             , ("buckets bits position", pDet prop_all_proper_bits)
             , ("no duplicate", pDet prop_no_duplicates)
             , ("k retrieval", pDet prop_kclosest_k)
@@ -55,31 +57,32 @@ instance Arbitrary Peer where
     return $ Peer host port nid
 
 -- Checks that all buckets have k or less elements
-prop_max_k_bucket (KNode l r) = prop_max_k_bucket l && prop_max_k_bucket r
-prop_max_k_bucket (KLeaf b) = bucketLength b <= kdepth
+prop_max_k_bucket :: KTree -> Bool
+prop_max_k_bucket = F.foldr ((&&) . (<= kdepth) . S.length) True
 
 -- Checks that all bucket element have the right bit sequence with its tree position
+prop_all_proper_bits :: KTree -> Bool
 prop_all_proper_bits (KLeaf b) = True
 prop_all_proper_bits kn@(KNode _ _) = prop_all_proper_bits' kn 0 binaries
   where prop_all_proper_bits' (KNode l r) prefix idx = 
           prop_all_proper_bits' l prefix (idx-1) 
                    && prop_all_proper_bits' r (prefix+2^(idx-1)) (idx-1)
         prop_all_proper_bits' (KLeaf kb) prefix idx = 
-          bucketAll (\x -> x `nxor` prefix < 2 ^ idx) kb
+          F.all (\x -> (nodeId x) `nxor` prefix < 2 ^ idx) kb
 
 -- Checks for duplicates
-prop_no_duplicates (KNode l r) = prop_no_duplicates l && prop_no_duplicates r
-prop_no_duplicates (KLeaf (KBucket s)) = nub sl == sl
-  where sl = F.toList s
+prop_no_duplicates :: KTree -> Bool
+prop_no_duplicates = F.foldr (\kb b -> b && nub (F.toList kb) == (F.toList kb)) True
 
 -- Checks that kclosest finds a least k nodes
+prop_kclosest_k :: KTree -> Peer -> Bool
 prop_kclosest_k kt peer = let kc = kclosest kt (nodeId peer)
-                         in length kc >= kdepth || length kc == ktreeSize kt
+                          in length kc >= kdepth || length kc == ktreeSize kt
 
 -- Checks kclosest are actually close to pivot
 prop_kclosest_close kt peer = all (\x -> (nodeId x) `xor` nid > kmaxDist || x `elem` kc) $ allNodes kt
   where kmaxDist = maximum $ map (xor nid . nodeId) kc
         allNodes (KNode l r) = allNodes l ++ allNodes r
-        allNodes (KLeaf kb) = bucketToList kb
+        allNodes (KLeaf kb) = F.toList kb
         kc  = kclosest kt nid
         nid = nodeId peer

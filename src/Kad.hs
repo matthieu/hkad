@@ -7,10 +7,11 @@ import Data.Word
 import Data.List(sortBy, (\\), delete, nub)
 import Data.Bits
 
-import Control.Monad(liftM, liftM2, liftM3)
+import Control.Monad(liftM, liftM2, liftM3, forM)
 import Control.Concurrent.STM
 import Control.Monad.Trans(liftIO)
 
+import System.Random
 import System.Log.Logger
 import Debug.Trace
 
@@ -28,9 +29,15 @@ startNode peer =
     then do
       insertInKTree peer
       me <- askLocalId
+      -- Node lookup on local id
       nodeLookup $ nodeId me
+      -- Node refresh on all buckets
+      kt <- readKTree
+      ids <- liftIO . mapM randomRIO $ kbucketsRange kt
+      trace (">> "++show (length ids)) (return ())
+      forM ids nodeLookup
+      return ()
     else return ()
- -- TODO node refresh on all buckets known at this point (end of 2.3)
 
 -- Initiates a node lookup on the network
 nodeLookup:: Integer -> ServerState ()

@@ -26,9 +26,9 @@ newNode myPort otherPort = do
 start myPort otherPort = do
   tunnel serverDispatch (localServer $ show myPort)
   startNode $ Peer "127.0.0.1" (show otherPort) otherPort
-  liftIO . threadDelay $ 10*1000*1000
+  liftIO . threadDelay $ 30*1000*1000
   kt <- readKTree
-  liftIO . putStrLn . (\x->show myPort ++ " " ++ x) . show . ktreeList $ kt
+  liftIO . putStrLn . (\x->show myPort ++ " " ++ x) . show . length . ktreeList $ kt
 
 debug = debugM "Main"
 
@@ -36,5 +36,5 @@ main = do
   --updateGlobalLogger "Main" (setLevel DEBUG)
   --updateGlobalLogger "Kad" (setLevel DEBUG)
 
-  forM (take 30 $ iterate (+1) 2000) (\x -> if x == 2000 then newNode x 0 else newNode x (x-1) )
-  liftIO . threadDelay $ 12*1000*1000
+  forM (take 200 $ iterate (+1) 2000) (\x -> if x == 2000 then newNode x 0 else newNode x (x-1) )
+  liftIO . threadDelay $ 32*1000*1000
