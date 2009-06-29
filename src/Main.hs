@@ -26,9 +26,10 @@ newNode myPort otherPort = do
   trot <- newTVarIO M.empty
   tkt <- newTVarIO $ kbleaf S.empty
   let myId = intSHA1 myPort
+  let gd   = GlobalData trt trot tkt (Peer "127.0.0.1" (show myPort) myId) M.empty
   -- nodeId = sha1 port
   debug $ "Starting on port " ++ show myPort
-  forkIO $ runServer trt trot tkt (Peer "127.0.0.1" (show myPort) myId) (start myPort otherPort)
+  forkIO $ runServer gd (start myPort otherPort)
 
 start myPort otherPort = do
   let peerId = intSHA1 otherPort

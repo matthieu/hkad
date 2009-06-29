@@ -130,8 +130,8 @@ parseHeader msg = runState parseHeader' msg
 
 tunnel :: (SockAddr -> String -> ServerState ()) -> ((SockAddr -> String -> IO ()) -> IO ()) -> ServerState ()
 tunnel f k = do
-  (rt, rot, kt, lid) <- ask
-  liftIO (k (\sock msg -> runServer rt rot kt lid (f sock msg)))
+  gs <- ask
+  liftIO (k (\sock msg -> runServer gs (f sock msg)))
 
 localServer port handlerFn = do
   forkIO . withSocketsDo $ do

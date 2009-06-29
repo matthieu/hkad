@@ -2,7 +2,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-} 
 
 module Globals (
-    RunningOps(..), ServerState, KadOp(..),
+    RunningOps(..), ServerState, KadOp(..), GlobalData(..),
     runServer, askRoutingT, askRunningOpsT, askKTree, readKTree, askLocalId,
     newRunningLookup, runningLookup, runningLookupDone, 
     newWaitingReply, waitingReply, newUid, insertInKTree,
@@ -33,18 +33,25 @@ data RunningOps =
   RunningLookup { lookupNodeId ::Integer,  known:: [Peer], pending:: [Peer], 
                   queried:: [Peer], lookupHandler:: ([Peer]->ServerState ()) }
 
-type GlobalData = (TVar RoutingTable, TVar RunningOpsTable, TVar KTree, Peer)
+data GlobalData = GlobalData { 
+  routingTable    :: TVar RoutingTable, 
+  runningOpsTable :: TVar RunningOpsTable, 
+  globalKTree     :: TVar KTree, 
+  localPeer       :: Peer,
+  localStore      :: M.Map Integer String 
+}
 
 newtype ServerState a = ServerState {
   runSS:: ReaderT GlobalData IO a 
 } deriving (Monad, MonadIO, MonadReader GlobalData)
 
-runServer rt rot kt localId st = runReaderT (runSS st) (rt, rot, kt, localId)
+-- runServer rt rot kt localId st = runReaderT (runSS st) (rt, rot, kt, localId)
+runServer gd st = runReaderT (runSS st) gd
 
-askRoutingT = do { (rt, rot, kt, lid) <- ask; return rt }
-askRunningOpsT = do { (rt, rot, kt, lid) <- ask; return rot }
-askKTree = do { (rt, rot, kt, lid) <- ask; return kt }
-askLocalId = do { (rt, rot, kt, lid) <- ask; return lid }
+askRoutingT = liftM routingTable ask
+askRunningOpsT = liftM runningOpsTable ask
+askKTree = liftM globalKTree ask
+askLocalId = liftM localPeer ask
 
 readRoutingT = do { rt <- askRoutingT; liftIO . atomically $ readTVar rt }
 readRunningOpsT = do { rot <- askRunningOpsT; liftIO . atomically $ readTVar rot }
