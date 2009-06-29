@@ -2,6 +2,7 @@ module Kad
   ( startNode, nodeLookup, nodeLookupReceive, nodeLookupCallback
   ) where
 
+import Prelude hiding (error)
 import qualified Data.Map as M
 import Data.Word
 import Data.List(sortBy, (\\), delete, nub)
@@ -92,8 +93,12 @@ nodeLookupCallback opId peer nodes = do
                  na = pickAlphaNodes nc
              in if null nc
                   then do 
-                    debug $ "Done! Closest nodes: " ++ show (take kdepth nk) -- TODO cleanup
-                    lookupHandler rl $ take kdepth nk
+                    debug $ "Done! Closest nodes: " ++ show (take kdepth nk)
+                    rld <- runningLookupDone opId
+                    case rld of
+                      False ->
+                        error $ "Couldn't find lookup " ++ (show opId) ++ " for deletion."
+                      True -> lookupHandler rl $ take kdepth nk
                   else do
                     newRunningLookup (lookupNodeId rl) nk na nq opId (lookupHandler rl)
                     sendLookup na (lookupNodeId rl) opId
@@ -116,4 +121,5 @@ closestNodes :: Integer -> [Peer] -> [Peer]
 closestNodes pivot = take kdepth . sortBy (closestNode pivot)
 
 debug s = liftM ((++ " " ++ s) . show . nodeId) askLocalId >>= liftIO . debugM "Kad"
+error s = liftM ((++ " " ++ s) . show . nodeId) askLocalId >>= liftIO . errorM "Kad"
 

@@ -4,7 +4,8 @@
 module Globals (
     RunningOps(..), ServerState, KadOp(..),
     runServer, askRoutingT, askRunningOpsT, askKTree, readKTree, askLocalId,
-    newRunningLookup, runningLookup, newWaitingReply, waitingReply, newUid, insertInKTree,
+    newRunningLookup, runningLookup, runningLookupDone, 
+    newWaitingReply, waitingReply, newUid, insertInKTree,
     modifyTVar
   ) where
 
@@ -60,8 +61,19 @@ newRunningLookup nid rs ps qs lookupId handlerFn = do
   liftIO . atomically $ modifyTVar rot (M.insert lookupId nrl)
 
 runningLookup lookupId = do
-  rot <- readRunningOpsT
-  return $ M.lookup lookupId rot
+  ro <- readRunningOpsT
+  return $ M.lookup lookupId ro
+
+runningLookupDone:: Word64 -> ServerState Bool
+runningLookupDone lookupId = do
+  rot <- askRunningOpsT
+  liftIO . atomically $ do
+    ro <- readTVar rot
+    case M.lookup lookupId ro of
+      Nothing -> return False
+      Just wr -> do
+        modifyTVar rot $ M.delete lookupId
+        return True
 
 newWaitingReply:: Peer -> KadOp -> Word64 -> Word64 -> ServerState ()
 newWaitingReply peer op msgId opId = do

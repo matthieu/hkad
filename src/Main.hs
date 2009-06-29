@@ -41,8 +41,8 @@ start myPort otherPort = do
 debug = debugM "Main"
 
 main = do
-  -- updateGlobalLogger "Main" (setLevel DEBUG)
-  -- updateGlobalLogger "Kad" (setLevel DEBUG)
+  updateGlobalLogger "Main" (setLevel INFO)
+  updateGlobalLogger "Kad" (setLevel INFO)
 
-  forM (take 50 $ iterate (+1) 2000) (\x -> if x == 2000 then newNode x 0 else newNode x (x-1) )
+  forM (take 200 $ iterate (+1) 2000) (\x -> if x == 2000 then newNode x 0 else newNode x (x-1) )
   liftIO . threadDelay $ 12*1000*1000
