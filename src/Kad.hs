@@ -30,18 +30,17 @@ startNode peer =
       insertInKTree peer
       me <- askLocalId
       -- Node lookup on local id
-      nodeLookup $ nodeId me
-      -- Node refresh on all buckets
-      kt <- readKTree
-      ids <- liftIO . mapM randomRIO $ kbucketsRange kt
-      trace (">> "++show (length ids)) (return ())
-      forM ids nodeLookup
-      return ()
+      nodeLookup (nodeId me) (\peers -> do
+        -- Node refresh on all buckets
+        kt <- readKTree
+        ids <- liftIO . mapM randomRIO $ kbucketsRange kt
+        forM ids (flip nodeLookup $ const (return ()))
+        return () )
     else return ()
 
 -- Initiates a node lookup on the network
-nodeLookup:: Integer -> ServerState ()
-nodeLookup nid = do
+nodeLookup:: Integer -> ([Peer] -> ServerState ()) -> ServerState ()
+nodeLookup nid handlerFn = do
   debug $ "Starting a node lookup for node " ++ show nid
   uid   <- liftIO newUid
   ktree <- readKTree
@@ -54,7 +53,7 @@ nodeLookup nid = do
       let ps = pickAlphaNodes kc
       -- Initially we know about the k nodes, query the first alpha and haven't 
       -- queried anything yet
-      newRunningLookup nid kc ps [] uid
+      newRunningLookup nid kc ps [] uid handlerFn
       -- sending a lookup on the alpha nodes picked
       sendLookup ps nid uid
 
@@ -92,11 +91,13 @@ nodeLookupCallback opId peer nodes = do
         then let nc = closestNodes (lookupNodeId rl) nk \\ nq
                  na = pickAlphaNodes nc
              in if null nc
-                  then do debug $ "Done! Closest nodes: " ++ show (take kdepth nk) -- TODO cleanup
+                  then do 
+                    debug $ "Done! Closest nodes: " ++ show (take kdepth nk) -- TODO cleanup
+                    lookupHandler rl $ take kdepth nk
                   else do
-                    newRunningLookup (lookupNodeId rl) nk na nq opId
+                    newRunningLookup (lookupNodeId rl) nk na nq opId (lookupHandler rl)
                     sendLookup na (lookupNodeId rl) opId
-        else newRunningLookup (lookupNodeId rl) nk rest nq opId
+        else newRunningLookup (lookupNodeId rl) nk rest nq opId (lookupHandler rl)
 
 -- Pick the "best" alpha nodes out of the k selected for lookup. For now we only
 -- select the 3 last ones (most stable) but it would be the right place to plug 

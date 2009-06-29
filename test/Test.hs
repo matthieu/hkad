@@ -32,7 +32,8 @@ main = do
             , ("buckets bits position", pDet prop_all_proper_bits)
             , ("no duplicate", pDet prop_no_duplicates)
             , ("k retrieval", pDet prop_kclosest_k)
-            , ("kclosest close", pDet prop_kclosest_close) ]
+            , ("kclosest close", pDet prop_kclosest_close)
+            , ("kbucketsRange length", pDet prop_kbucketsRange_length)]
 
 --
 -- Quickcheck definitions and property checkers for KTree
@@ -86,3 +87,6 @@ prop_kclosest_close kt peer = all (\x -> (nodeId x) `xor` nid > kmaxDist || x `e
         allNodes (KLeaf kb) = F.toList kb
         kc  = kclosest kt nid
         nid = nodeId peer
+
+prop_kbucketsRange_length :: KTree -> Bool
+prop_kbucketsRange_length kt = F.foldr (const (+1)) 0 kt == length (kbucketsRange kt)

@@ -49,14 +49,6 @@ type KTree = FKTree KBucket
 
 kbleaf = KLeaf
 
--- bucketInsert (KBucket seq) val = KBucket (seq S.|> val)
--- bucketElem (KBucket seq) val = F.elem val seq
--- bucketLength (KBucket seq) = S.length seq
--- bucketAll fn (KBucket seq) = F.all (\p -> fn $ nodeId p) seq
--- bucketToList (KBucket seq) = F.toList seq
--- minInBucket (KBucket seq) = min seq
--- maxInBucket (KBucket seq) = max seq
-
 -- Sets common bits to 0 and differing bits to 1
 --   ex: 101110 `xor` 100101 = 001011
 nxor a b = (a .|. b) `xor` (a .&. b)

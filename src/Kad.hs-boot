@@ -10,4 +10,4 @@ nodeLookupReceive:: Word64 -> Integer -> Peer -> ServerState ()
 
 nodeLookupCallback:: Word64 -> Peer -> [Peer] -> ServerState()
 
-nodeLookup:: Integer -> ServerState ()
+nodeLookup:: Integer -> ([Peer] -> ServerState ()) -> ServerState ()

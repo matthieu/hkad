@@ -28,7 +28,9 @@ data WaitingReply = WaitingReply { waitFromPeer:: Peer,  waitOp:: KadOp, waitOpU
 
 type RunningOpsTable = M.Map Word64 RunningOps
 
-data RunningOps = RunningLookup { lookupNodeId ::Integer,  known:: [Peer], pending:: [Peer], queried:: [Peer] }
+data RunningOps = 
+  RunningLookup { lookupNodeId ::Integer,  known:: [Peer], pending:: [Peer], 
+                  queried:: [Peer], lookupHandler:: ([Peer]->ServerState ()) }
 
 type GlobalData = (TVar RoutingTable, TVar RunningOpsTable, TVar KTree, Peer)
 
@@ -52,9 +54,9 @@ modifyTVar tv f = readTVar tv >>= writeTVar tv . f
 
 -- Inserts a new running lookup in the table of current operations
 --
-newRunningLookup nid rs ps qs lookupId = do
+newRunningLookup nid rs ps qs lookupId handlerFn = do
   rot <- askRunningOpsT
-  let nrl = RunningLookup nid rs ps qs
+  let nrl = RunningLookup nid rs ps qs handlerFn
   liftIO . atomically $ modifyTVar rot (M.insert lookupId nrl)
 
 runningLookup lookupId = do
