@@ -1,5 +1,6 @@
 module Comm
-  ( KadOp(..), sendLookup, sendLookupReply, parseHeader, localServer, serverDispatch, tunnel,
+  ( KadOp(..), sendLookup, sendLookupReply, sendStore, sendValueReply,
+    parseHeader, localServer, serverDispatch, tunnel,
     toCharArray, fromCharArray
   ) where
 
@@ -21,7 +22,7 @@ import Debug.Trace
 
 import KTable
 import Globals
-import {-# SOURCE #-} Kad(nodeLookupReceive, nodeLookupCallback)
+import {-# SOURCE #-} Kad(storeReceive, nodeLookupReceive, nodeLookupCallback, valueLookupCallback)
 
 -- TODO shut out nodes that are too chatty
 -- Header: version - 1 byte
@@ -39,28 +40,38 @@ data Header = Header { msgVersion ::Int, msgOp ::KadOp, msgUid ::Word64, sender 
 -- Client functions to send operations to other nodes.
 --
 
--- Sends to an array of peers a node lookup message for a given node id. The lookup
--- operation itself is tracked by a secondary id stored locally.
-sendLookup peers nid lookupId = forM peers (\p -> do 
+-- Sends to an array of peers a lookup message for a given node id. The lookup
+-- operation itself is tracked by a secondary id stored locally. Supports both
+-- node and value lookup using the last boolean
+sendLookup peers nid lookupId valL = forM peers (\p -> do 
   msgId <- liftIO newUid
   me    <- askLocalId
-  let msg = buildLookupMsg nid msgId me
-  newWaitingReply p NodeLookupReplyOp msgId lookupId
-  liftIO $ sendToPeer msg p ) >> return ()
+  let msg = buildHeader (if valL then ValueLookupOp else NodeLookupOp) msgId me ++ toCharArray nid 20
 
-  where buildLookupMsg nid msgId me = 
-          buildHeader NodeLookupOp msgId me ++ toCharArray nid 160
+  newWaitingReply p (if valL then ValueLookupReplyOp else NodeLookupReplyOp) msgId lookupId
+  liftIO $ sendToPeer msg p ) >> return ()
 
 -- Sends the reply to a node lookup query, sending k nodes and reproducing the
 -- received message id.
 sendLookupReply:: Peer -> [Peer] -> Word64 -> ServerState ()
 sendLookupReply peer nodes msgId = do
   me <- askLocalId
-  let msg = buildLookupReplyMsg nodes msgId me
+  let msg = buildHeader NodeLookupReplyOp msgId me ++ serPeers nodes
   liftIO $ sendToPeer msg peer
 
-  where buildLookupReplyMsg nodes msgId me = 
-          buildHeader NodeLookupReplyOp msgId me ++ serPeers nodes
+sendValueReply peer val msgId = do
+  me <- askLocalId
+  let msg = buildHeader ValueLookupReplyOp msgId me ++ 
+        if length val `mod` 26 == 0 then val else val ++ " "
+  liftIO $ sendToPeer msg peer
+
+sendStore peers key value storeId = forM peers (\p -> do
+  msgId <- liftIO newUid
+  me    <- askLocalId
+  let msg = buildHeader StoreOp msgId me ++ toCharArray key 20 ++ value
+
+  newWaitingReply p StoreReplyOp msgId storeId
+  liftIO $ sendToPeer msg p ) >> return ()
 
 sendToPeer msg peer = do
   phandle <- openPeerHandle (host peer) (port peer)
@@ -93,13 +104,26 @@ serverDispatch addr msg = do
           rl <- runningLookup opId
           case rl of
             Nothing -> return ()
-            Just rl -> nodeLookupCallback opId peer (if length msg > 0 then deserPeers msg else [])
+            Just rl -> nodeLookupCallback False opId peer (if length msg > 0 then deserPeers msg else [])
+        dispatchReplyOp ValueLookupReplyOp opId msg peer = do 
+          rl <- runningLookup opId
+          case rl of
+            Nothing -> return ()
+            Just rl -> 
+              if length msg `mod` 26 == 0 
+                then nodeLookupCallback True opId peer (if length msg > 0 then deserPeers msg else [])
+                else valueLookupCallback opId peer msg
         dispatchReplyOp _ _ _ _  = return ()
 
-        dispatchOp NodeLookupOp msg peer msgId = nodeLookupReceive msgId (fromCharArray msg) peer
-        dispatchOp _ _ _ _                     = return ()
+        dispatchOp NodeLookupOp msg peer msgId = 
+          nodeLookupReceive False msgId (fromCharArray msg) peer
+        dispatchOp StoreOp msg peer msgId = 
+          storeReceive msgId (fromCharArray $ take 20 msg) (drop 20 msg) peer
+        dispatchOp ValueLookupOp msg peer msgId =
+          nodeLookupReceive True msgId (fromCharArray msg) peer
+        dispatchOp _ _ _ _                = return ()
 
--- implement refresh logic
+-- TODO implement refresh logic
 refreshPeer = insertInKTree
 
 -- TODO handle things like empty messages, adding error handling
@@ -118,6 +142,10 @@ parseHeader msg = runState parseHeader' msg
             '\STX' -> PingReplyOp
             '\ETX' -> NodeLookupOp
             '\EOT' -> NodeLookupReplyOp
+            '\ENQ' -> StoreOp
+            '\ACK' -> StoreReplyOp
+            '\a'   -> ValueLookupOp
+            '\b'   -> ValueLookupReplyOp
             _      -> UnknownOp )
         parseUid  = consuming 8 fromCharArray
         parsePeer = consuming 26 deserPeer
@@ -156,10 +184,14 @@ buildHeader:: KadOp -> Word64 -> Peer -> String
 buildHeader optype msgId sender = 
   (chr 1) : optypeStr : toCharArray (toInteger msgId) 8 ++ serPeer sender
   where optypeStr = case optype of
-                      PingOp            -> chr 1
-                      PingReplyOp       -> chr 2
-                      NodeLookupOp      -> chr 3
-                      NodeLookupReplyOp -> chr 4
+                      PingOp              -> chr 1
+                      PingReplyOp         -> chr 2
+                      NodeLookupOp        -> chr 3
+                      NodeLookupReplyOp   -> chr 4
+                      StoreOp             -> chr 5
+                      StoreReplyOp        -> chr 6
+                      ValueLookupOp       -> chr 7
+                      ValueLookupReplyOp  -> chr 8
 
 -- Convert an integer to a string of n bytes
 toCharArray:: Integer -> Int -> [Char]

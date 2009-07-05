@@ -1,10 +1,12 @@
 module Kad 
-  ( startNode, nodeLookup, nodeLookupReceive, nodeLookupCallback
+  ( startNode, nodeLookup, store, nodeLookupReceive, storeReceive, 
+    nodeLookupCallback, valueLookupCallback
   ) where
 
 import Prelude hiding (error)
 import qualified Data.Map as M
 import Data.Word
+import Data.Maybe
 import Data.List(sortBy, (\\), delete, nub)
 import Data.Bits
 
@@ -31,17 +33,25 @@ startNode peer =
       insertInKTree peer
       me <- askLocalId
       -- Node lookup on local id
-      nodeLookup (nodeId me) (\peers -> do
+      nodeLookup (nodeId me) $ PeersHandler (\peers -> do
         -- Node refresh on all buckets
         kt <- readKTree
         ids <- liftIO . mapM randomRIO $ kbucketsRange kt
-        forM ids (flip nodeLookup $ const (return ()))
+        forM ids (flip nodeLookup . PeersHandler $ const (return ()))
         return () )
     else return ()
 
--- Initiates a node lookup on the network
-nodeLookup:: Integer -> ([Peer] -> ServerState ()) -> ServerState ()
-nodeLookup nid handlerFn = do
+-- Initiates a node lookup on the network. Starts with the k closest
+-- nodes known locally and gets closer using the nodes returned.
+nodeLookup:: Integer -> HandlerFn -> ServerState ()
+nodeLookup = genericLookup False
+
+-- Value lookup: pretty much like a node lookup except that if a node has the
+-- value in its local store, it returns it instead of the k closest nodes.
+valueLookup:: Integer -> HandlerFn -> ServerState ()
+valueLookup = genericLookup True
+
+genericLookup valL nid handlerFn = do
   debug $ "Starting a node lookup for node " ++ show nid
   uid   <- liftIO newUid
   ktree <- readKTree
@@ -56,26 +66,36 @@ nodeLookup nid handlerFn = do
       -- queried anything yet
       newRunningLookup nid kc ps [] uid handlerFn
       -- sending a lookup on the alpha nodes picked
-      sendLookup ps nid uid
+      sendLookup ps nid uid valL
+
+-- Stores a key / value pair by doing a node lookup and sending a store command
+-- to the closest nodes found
+store:: Integer -> String -> ServerState ()
+store key kdata = nodeLookup key $ PeersHandler (\peers -> liftIO newUid >>= sendStore peers key kdata)
 
 -- Received a node lookup request, queries the KTable for the k closest and
 -- sens the information back.
-nodeLookupReceive:: Word64 -> Integer -> Peer -> ServerState ()
-nodeLookupReceive msgId nid peer = do
-  ktree <- readKTree
-  let close = kclosest ktree nid
+nodeLookupReceive:: Bool -> Word64 -> Integer -> Peer -> ServerState ()
+nodeLookupReceive valL msgId nid peer = do
+  localVal <- lookupInStore nid
+  if valL && isJust localVal
+    then
+      sendValueReply peer (fromJust localVal) msgId
+    else do
+      ktree <- readKTree
+      let close = kclosest ktree nid
+      debug $ "Replying to node lookup for nid " ++ show nid ++ " from peer " ++ show peer ++ " with nodes " ++ show close
+      sendLookupReply peer close msgId
 
-  debug $ "Replying to node lookup for nid " ++ show nid ++ " from peer " ++ show peer ++ " with nodes " ++ show close
-  sendLookupReply peer close msgId
-
--- Received the result of a node lookup request, stores the k nodes received
+-- Received the result of a lookup request, stores the k nodes received
 -- and updates the status of the node lookup, initiates a new alpha lookup
--- round or completes.
+-- round or completes. Supports both node and value lookup using the first
+-- boolean.
 -- TODO timer
 -- TODO alpha round fails to find closer node
 -- TODO lookup should be read and written in the same atomically
-nodeLookupCallback:: Word64 -> Peer -> [Peer] -> ServerState()
-nodeLookupCallback opId peer nodes = do
+nodeLookupCallback :: Bool -> Word64 -> Peer -> [Peer] -> ServerState()
+nodeLookupCallback valL opId peer nodes = do
   debug $ "Received a node lookup callback from peer " ++ show peer ++ " with nodes " ++ show nodes
   me  <- askLocalId
   rlm <- runningLookup opId
@@ -96,13 +116,30 @@ nodeLookupCallback opId peer nodes = do
                     debug $ "Done! Closest nodes: " ++ show (take kdepth nk)
                     rld <- runningLookupDone opId
                     case rld of
-                      False ->
-                        error $ "Couldn't find lookup " ++ (show opId) ++ " for deletion."
-                      True -> lookupHandler rl $ take kdepth nk
+                      Nothing -> error $ "Couldn't find lookup " ++ (show opId) ++ " for deletion."
+                      Just _  -> case lookupHandler rl of
+                                (PeersHandler fn)   -> fn $ take kdepth nk
+                                (ContentHandler fn) -> fn Nothing -- Value lookup didn't find anything
                   else do
                     newRunningLookup (lookupNodeId rl) nk na nq opId (lookupHandler rl)
-                    sendLookup na (lookupNodeId rl) opId
+                    sendLookup na (lookupNodeId rl) opId valL
         else newRunningLookup (lookupNodeId rl) nk rest nq opId (lookupHandler rl)
+
+-- Received the result of a value lookup callback, the string received is the
+-- expected value.
+valueLookupCallback :: Word64 -> Peer -> String -> ServerState()
+valueLookupCallback opId peer val = do
+  rld <- runningLookupDone opId
+  case rld of
+    Nothing -> error $ "Couldn't find lookup " ++ (show opId) ++ " for deletion."
+    Just rl -> case lookupHandler rl of
+              (ContentHandler fn) -> fn $ Just val
+              _ -> error "Wrong handler for value lookup!"
+
+-- Responds to a store call by insert the key/value received in the local storage.
+-- TODO peer could also respond with 'store full', what do we do?
+storeReceive:: Word64 -> Integer -> String -> Peer -> ServerState ()
+storeReceive msgId key val peer = insertInStore key val
 
 -- Pick the "best" alpha nodes out of the k selected for lookup. For now we only
 -- select the 3 last ones (most stable) but it would be the right place to plug 

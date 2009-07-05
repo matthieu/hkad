@@ -22,11 +22,12 @@ import Kad
 intSHA1 n = integerDigest . sha1 $ BI.chunk (B.pack . show $ n) BI.Empty
 
 newNode myPort otherPort = do
-  trt <- newTVarIO M.empty
+  trt  <- newTVarIO M.empty
   trot <- newTVarIO M.empty
-  tkt <- newTVarIO $ kbleaf S.empty
+  tkt  <- newTVarIO $ kbleaf S.empty
+  ls   <- newTVarIO M.empty
   let myId = intSHA1 myPort
-  let gd   = GlobalData trt trot tkt (Peer "127.0.0.1" (show myPort) myId) M.empty
+  let gd   = GlobalData trt trot tkt (Peer "127.0.0.1" (show myPort) myId) ls
   -- nodeId = sha1 port
   debug $ "Starting on port " ++ show myPort
   forkIO $ runServer gd (start myPort otherPort)

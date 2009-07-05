@@ -1,13 +1,19 @@
 module Kad 
-  ( nodeLookup, nodeLookupReceive, nodeLookupCallback
+  ( nodeLookup, store, nodeLookupReceive, storeReceive, nodeLookupCallback, valueLookupCallback
   ) where
 
 import Data.Word
 import KTable
 import Globals
 
-nodeLookupReceive:: Word64 -> Integer -> Peer -> ServerState ()
+nodeLookup:: Integer -> HandlerFn -> ServerState ()
 
-nodeLookupCallback:: Word64 -> Peer -> [Peer] -> ServerState()
+store:: Integer -> String -> ServerState ()
 
-nodeLookup:: Integer -> ([Peer] -> ServerState ()) -> ServerState ()
+nodeLookupReceive:: Bool -> Word64 -> Integer -> Peer -> ServerState ()
+
+nodeLookupCallback:: Bool -> Word64 -> Peer -> [Peer] -> ServerState()
+
+valueLookupCallback :: Word64 -> Peer -> String -> ServerState()
+
+storeReceive:: Word64 -> Integer -> String -> Peer -> ServerState ()
