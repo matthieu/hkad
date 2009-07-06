@@ -31,14 +31,23 @@ newNode myPort otherPort = do
   -- nodeId = sha1 port
   debug $ "Starting on port " ++ show myPort
   forkIO $ runServer gd (start myPort otherPort)
+  liftIO . threadDelay $ 100*1000
 
 start myPort otherPort = do
   let peerId = intSHA1 otherPort
   tunnel serverDispatch (localServer $ show myPort)
   startNode $ Peer "127.0.0.1" (show otherPort) peerId
   liftIO . threadDelay $ 10*1000*1000
+  if myPort `mod` 70 == 0 
+    then do
+      liftIO . putStrLn $ show myPort ++ " Store and retrieve"
+      store (intSHA1 $ myPort * 11) "foobar"
+      liftIO . threadDelay $ 2*1000*1000
+      valueLookup (intSHA1 $ myPort * 11) $ ContentHandler (\s-> liftIO . putStrLn . ("### Found " ++) . show $ s)
+    else return ()
   kt <- readKTree
   liftIO . putStrLn . (\x->show myPort ++ " " ++ x) . show . length . ktreeList $ kt
+  liftIO . threadDelay $ 500*1000*1000
 
 debug = debugM "Main"
 
@@ -47,4 +56,4 @@ main = do
   updateGlobalLogger "Kad" (setLevel INFO)
 
   forM (take 200 $ iterate (+1) 2000) (\x -> if x == 2000 then newNode x 0 else newNode x (x-1) )
-  liftIO . threadDelay $ 12*1000*1000
+  liftIO . threadDelay $ 22*1000*1000

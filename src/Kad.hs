@@ -1,6 +1,6 @@
 module Kad 
-  ( startNode, nodeLookup, store, nodeLookupReceive, storeReceive, 
-    nodeLookupCallback, valueLookupCallback
+  ( startNode, nodeLookup, valueLookup, store, 
+    nodeLookupReceive, storeReceive, nodeLookupCallback, valueLookupCallback
   ) where
 
 import Prelude hiding (error)
@@ -71,21 +71,22 @@ genericLookup valL nid handlerFn = do
 -- Stores a key / value pair by doing a node lookup and sending a store command
 -- to the closest nodes found
 store:: Integer -> String -> ServerState ()
-store key kdata = nodeLookup key $ PeersHandler (\peers -> liftIO newUid >>= sendStore peers key kdata)
+store key kdata = nodeLookup key $ PeersHandler (\peers -> (liftIO . putStrLn $ "Sending store to peers " ++ show peers) >> liftIO newUid >>= sendStore peers key kdata)
 
 -- Received a node lookup request, queries the KTable for the k closest and
--- sens the information back.
+-- sends the information back.
 nodeLookupReceive:: Bool -> Word64 -> Integer -> Peer -> ServerState ()
 nodeLookupReceive valL msgId nid peer = do
   localVal <- lookupInStore nid
   if valL && isJust localVal
-    then
+    then do
+      liftIO . putStrLn $ "Found local value asked by " ++ show peer
       sendValueReply peer (fromJust localVal) msgId
     else do
       ktree <- readKTree
       let close = kclosest ktree nid
       debug $ "Replying to node lookup for nid " ++ show nid ++ " from peer " ++ show peer ++ " with nodes " ++ show close
-      sendLookupReply peer close msgId
+      sendLookupReply valL peer close msgId
 
 -- Received the result of a lookup request, stores the k nodes received
 -- and updates the status of the node lookup, initiates a new alpha lookup
@@ -139,7 +140,7 @@ valueLookupCallback opId peer val = do
 -- Responds to a store call by insert the key/value received in the local storage.
 -- TODO peer could also respond with 'store full', what do we do?
 storeReceive:: Word64 -> Integer -> String -> Peer -> ServerState ()
-storeReceive msgId key val peer = insertInStore key val
+storeReceive msgId key val peer = (liftIO . putStrLn $ "local store for " ++ show key ++ " " ++ show val) >> insertInStore key val
 
 -- Pick the "best" alpha nodes out of the k selected for lookup. For now we only
 -- select the 3 last ones (most stable) but it would be the right place to plug 

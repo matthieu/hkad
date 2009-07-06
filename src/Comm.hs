@@ -1,5 +1,5 @@
 module Comm
-  ( KadOp(..), sendLookup, sendLookupReply, sendStore, sendValueReply,
+  ( sendLookup, sendLookupReply, sendStore, sendValueReply,
     parseHeader, localServer, serverDispatch, tunnel,
     toCharArray, fromCharArray
   ) where
@@ -53,16 +53,16 @@ sendLookup peers nid lookupId valL = forM peers (\p -> do
 
 -- Sends the reply to a node lookup query, sending k nodes and reproducing the
 -- received message id.
-sendLookupReply:: Peer -> [Peer] -> Word64 -> ServerState ()
-sendLookupReply peer nodes msgId = do
+sendLookupReply:: Bool -> Peer -> [Peer] -> Word64 -> ServerState ()
+sendLookupReply valL peer nodes msgId = do
   me <- askLocalId
-  let msg = buildHeader NodeLookupReplyOp msgId me ++ serPeers nodes
+  let msg = buildHeader (if valL then ValueLookupReplyOp else NodeLookupReplyOp) msgId me ++ serPeers nodes
   liftIO $ sendToPeer msg peer
 
 sendValueReply peer val msgId = do
   me <- askLocalId
   let msg = buildHeader ValueLookupReplyOp msgId me ++ 
-        if length val `mod` 26 == 0 then val else val ++ " "
+        if length val `mod` 26 == 0 then val ++ " " else val
   liftIO $ sendToPeer msg peer
 
 sendStore peers key value storeId = forM peers (\p -> do
