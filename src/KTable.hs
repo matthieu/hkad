@@ -1,7 +1,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-} 
 
 module KTable
-  ( KTree, FKTree(..), Peer(..), kinsert, kclosest, kbucketsRange, ktreeSize, ktreeList,
+  ( KTree, FKTree(..), Node(..), kinsert, kclosest, kbucketsRange, ktreeSize, ktreeList,
     kbleaf, binaries, kdepth, nxor
   ) where
 
@@ -22,20 +22,11 @@ binaries = 160
 
 -- Data types and helper functions
 --
-data Peer = Peer { host:: String, port:: String, nodeId:: Integer }
 
-instance Eq Peer where
-  p1 == p2 = if nodeId p1 /= -1 && nodeId p2 /= -1 
-               then nodeId p1 == nodeId p2
-               else host p1 == host p2 && port p1 == port p2
-
-instance Show Peer where
-  show p = "< " ++ host p ++ " / " ++ port p ++ " / " ++ show (nodeId p) ++ " >"
-
-instance Ord Peer where
-  compare p1 p2 = compare (nodeId p1) (nodeId p2)
-
-type KBucket = S.Seq Peer
+class Node a where
+  nodeId :: a -> Integer
+  
+type KBucket a = S.Seq a
 
 data FKTree a = KNode { leftKTree:: FKTree a, rightKTree:: FKTree a}
                 | KLeaf a
@@ -45,7 +36,7 @@ instance F.Foldable FKTree where
   foldMap f (KLeaf x)   = f x
   foldMap f (KNode l r) = F.foldMap f l `mappend` F.foldMap f r
 
-type KTree = FKTree KBucket
+type KTree a = FKTree (KBucket a)
 
 kbleaf = KLeaf
 
@@ -103,12 +94,12 @@ kbucketsRange = F.foldr (\kb r -> (nodeId . F.minimum $ kb, nodeId . F.maximum $
 
 -- Finds the closest bucket to an id and apply the provided transformation 
 -- function (from KBucket to KTree) on it.
-update_closest_bucket :: (Bits a) => KTree -> a -> (Int -> KBucket -> KTree) -> KTree 
+update_closest_bucket :: (Bits a) => KTree p -> a -> (Int -> KBucket p -> KTree p) -> KTree p
 update_closest_bucket = traverseKTree KNode KNode (binaries-1)
 
 -- Finds the closest bucket to an id and apply the provided function on it.
 --
-with_closest_bucket :: (Bits a) => KTree -> a -> (Int -> KBucket -> t) -> t
+with_closest_bucket :: (Bits a) => KTree p -> a -> (Int -> KBucket p -> t) -> t
 with_closest_bucket = traverseKTree (flip const) const (binaries-1)
 
 -- Total number of nodes stored in all buckets
@@ -119,8 +110,8 @@ ktreeList = F.foldr ((++) . F.toList) []
 -- Goes down the tree by following the provided node id bit track and calls
 -- a provided function once a matching bucket has been found.
 --
-traverseKTree :: (Bits a) => (KTree -> t -> t) -> (t -> KTree -> t) -> 
-                              Int -> KTree -> a -> (Int -> KBucket -> t) -> t
+traverseKTree :: (Bits a) => (KTree p -> t -> t) -> (t -> KTree p -> t) -> 
+                              Int -> KTree p -> a -> (Int -> KBucket p -> t) -> t
 traverseKTree consRight consLeft pos (KNode left right) nid fn =
   if testBit nid pos 
     then consRight left (traverseKTree consRight consLeft (pos-1) right nid fn)

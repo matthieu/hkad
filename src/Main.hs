@@ -27,7 +27,7 @@ newNode myPort otherPort = do
   tkt  <- newTVarIO $ kbleaf S.empty
   ls   <- newTVarIO M.empty
   let myId = intSHA1 myPort
-  let gd   = GlobalData trt trot tkt (Peer "127.0.0.1" (show myPort) myId) ls
+  let gd   = GlobalData trt trot tkt (IPPeer "127.0.0.1" (show myPort) myId) ls
   -- nodeId = sha1 port
   debug $ "Starting on port " ++ show myPort
   forkIO $ runServer gd (start myPort otherPort)
@@ -36,7 +36,9 @@ newNode myPort otherPort = do
 start myPort otherPort = do
   let peerId = intSHA1 otherPort
   tunnel serverDispatch (localServer $ show myPort)
-  startNode $ Peer "127.0.0.1" (show otherPort) peerId
+  if otherPort > 0
+    then startNode $ IPPeer "127.0.0.1" (show otherPort) peerId
+    else return ()
   liftIO . threadDelay $ 10*1000*1000
   if myPort `mod` 70 == 0 
     then do

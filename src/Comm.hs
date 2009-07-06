@@ -1,6 +1,5 @@
 module Comm
-  ( sendLookup, sendLookupReply, sendStore, sendValueReply,
-    parseHeader, localServer, serverDispatch, tunnel,
+  ( IPPeer(..), parseHeader, localServer, serverDispatch, tunnel,
     toCharArray, fromCharArray
   ) where
 
@@ -22,7 +21,7 @@ import Debug.Trace
 
 import KTable
 import Globals
-import {-# SOURCE #-} Kad(storeReceive, nodeLookupReceive, nodeLookupCallback, valueLookupCallback)
+import Kad (storeReceive, nodeLookupReceive, nodeLookupCallback, valueLookupCallback)
 
 -- TODO shut out nodes that are too chatty
 -- Header: version - 1 byte
@@ -31,9 +30,31 @@ import {-# SOURCE #-} Kad(storeReceive, nodeLookupReceive, nodeLookupCallback, v
 --
 -- Node Lookup: node id - 20 bytes
 
+data IPPeer = IPPeer { host:: String, port:: String, ipNodeId:: Integer }
+
+instance Eq IPPeer where
+  p1 == p2 = if nodeId p1 /= -1 && nodeId p2 /= -1 
+               then nodeId p1 == nodeId p2
+               else host p1 == host p2 && port p1 == port p2
+
+instance Show IPPeer where
+  show p = "< " ++ host p ++ " / " ++ port p ++ " / " ++ show (nodeId p) ++ " >"
+
+instance Ord IPPeer where
+  compare p1 p2 = compare (nodeId p1) (nodeId p2)
+
+instance Peer IPPeer where
+  sendLookup = sendLookupIP
+  sendLookupReply = sendLookupReplyIP
+  sendStore = sendStoreIP
+  sendValueReply = sendValueReplyIP
+
+instance Node IPPeer where
+  nodeId = ipNodeId
+
 data PeerHandle = PeerHandle { pSocket :: Socket, pAddress :: SockAddr }
 
-data Header = Header { msgVersion ::Int, msgOp ::KadOp, msgUid ::Word64, sender ::Peer }
+data Header = Header { msgVersion ::Int, msgOp ::KadOp, msgUid ::Word64, sender ::IPPeer }
   deriving Show
 
 --
@@ -43,7 +64,7 @@ data Header = Header { msgVersion ::Int, msgOp ::KadOp, msgUid ::Word64, sender 
 -- Sends to an array of peers a lookup message for a given node id. The lookup
 -- operation itself is tracked by a secondary id stored locally. Supports both
 -- node and value lookup using the last boolean
-sendLookup peers nid lookupId valL = forM peers (\p -> do 
+sendLookupIP peers nid lookupId valL = forM peers (\p -> do 
   msgId <- liftIO newUid
   me    <- askLocalId
   let msg = buildHeader (if valL then ValueLookupOp else NodeLookupOp) msgId me ++ toCharArray nid 20
@@ -53,19 +74,18 @@ sendLookup peers nid lookupId valL = forM peers (\p -> do
 
 -- Sends the reply to a node lookup query, sending k nodes and reproducing the
 -- received message id.
-sendLookupReply:: Bool -> Peer -> [Peer] -> Word64 -> ServerState ()
-sendLookupReply valL peer nodes msgId = do
+sendLookupReplyIP valL peer nodes msgId = do
   me <- askLocalId
   let msg = buildHeader (if valL then ValueLookupReplyOp else NodeLookupReplyOp) msgId me ++ serPeers nodes
   liftIO $ sendToPeer msg peer
 
-sendValueReply peer val msgId = do
+sendValueReplyIP peer val msgId = do
   me <- askLocalId
   let msg = buildHeader ValueLookupReplyOp msgId me ++ 
         if length val `mod` 26 == 0 then val ++ " " else val
   liftIO $ sendToPeer msg peer
 
-sendStore peers key value storeId = forM peers (\p -> do
+sendStoreIP peers key value storeId = forM peers (\p -> do
   msgId <- liftIO newUid
   me    <- askLocalId
   let msg = buildHeader StoreOp msgId me ++ toCharArray key 20 ++ value
@@ -156,7 +176,7 @@ parseHeader msg = runState parseHeader' msg
           put r
           return $ fn v
 
-tunnel :: (SockAddr -> String -> ServerState ()) -> ((SockAddr -> String -> IO ()) -> IO ()) -> ServerState ()
+tunnel :: (SockAddr -> String -> ServerState p ()) -> ((SockAddr -> String -> IO ()) -> IO ()) -> ServerState p ()
 tunnel f k = do
   gs <- ask
   liftIO (k (\sock msg -> runServer gs (f sock msg)))
@@ -180,7 +200,6 @@ localServer port handlerFn = do
 -- Utility functions to serialize messages
 --
 
-buildHeader:: KadOp -> Word64 -> Peer -> String
 buildHeader optype msgId sender = 
   (chr 1) : optypeStr : toCharArray (toInteger msgId) 8 ++ serPeer sender
   where optypeStr = case optype of
@@ -211,7 +230,7 @@ deserPeers = map deserPeer . splitEvery 26
 deserPeer s = 
   let (h,rest) = splitAt 4 s
       (p,nid)  = splitAt 2 rest
-  in Peer (deserIP h) (deserPort p) (fromCharArray nid)
+  in IPPeer (deserIP h) (deserPort p) (fromCharArray nid)
 
 deserIP = intercalate "." . map (show . ord)
 serIP = map (chr . read) . split '.' 
@@ -230,7 +249,7 @@ toBytes num depth = unfoldr byteMod (num,depth-1)
 
 -- Build a new peer from packet address and header peer info
 toPeer addr pr = let (h,p) = span (/=':') (show addr)
-                 in Peer h (port pr) (nodeId pr)
+                 in IPPeer h (port pr) (nodeId pr)
 
 -- Tried below but host is a Word 32...
 --   case addr of

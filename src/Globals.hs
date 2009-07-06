@@ -2,6 +2,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-} 
 
 module Globals (
+    Peer(..),
     RunningOps(..), ServerState, KadOp(..), GlobalData(..), HandlerFn(..),
     runServer, askRoutingT, askRunningOpsT, askKTree, readKTree, askLocalId,
     newRunningLookup, runningLookup, runningLookupDone, 
@@ -20,35 +21,41 @@ import Debug.Trace
 
 import KTable
 
-type RoutingTable = M.Map Word64 WaitingReply
+class Peer p where
+  sendLookup      :: [p] -> Integer -> Word64 -> Bool -> ServerState p ()
+  sendLookupReply :: Bool -> p -> [p] -> Word64 -> ServerState p () 
+  sendStore       :: [p] -> Integer -> String -> Word64 -> ServerState p ()
+  sendValueReply  :: p -> String -> Word64 -> ServerState p ()
+
+type RoutingTable p = M.Map Word64 (WaitingReply p)
 
 data KadOp = UnknownOp | NodeLookupOp | NodeLookupReplyOp | PingOp | PingReplyOp
              | StoreOp | StoreReplyOp | ValueLookupOp | ValueLookupReplyOp
   deriving (Show, Eq)
 
-data WaitingReply = WaitingReply { waitFromPeer:: Peer,  waitOp:: KadOp, waitOpUid:: Word64 }
+data WaitingReply p = WaitingReply { waitFromPeer:: p,  waitOp:: KadOp, waitOpUid:: Word64 }
   deriving (Show, Eq)
 
-type RunningOpsTable = M.Map Word64 RunningOps
+type RunningOpsTable p = M.Map Word64 (RunningOps p)
 
-data RunningOps = 
-  RunningLookup { lookupNodeId ::Integer,  known:: [Peer], pending:: [Peer], 
-                  queried:: [Peer], lookupHandler:: HandlerFn }
+data RunningOps p = 
+  RunningLookup { lookupNodeId ::Integer,  known:: [p], pending:: [p],
+                  queried:: [p], lookupHandler:: HandlerFn p }
 
-data HandlerFn = PeersHandler ([Peer] -> ServerState ())
-               | ContentHandler (Maybe String -> ServerState ())
+data HandlerFn p = PeersHandler ([p] -> ServerState p ())
+                 | ContentHandler (Maybe String -> ServerState p ())
 
-data GlobalData = GlobalData { 
-  routingTable    :: TVar RoutingTable, 
-  runningOpsTable :: TVar RunningOpsTable, 
-  globalKTree     :: TVar KTree, 
-  localPeer       :: Peer,
+data GlobalData p = GlobalData { 
+  routingTable    :: TVar (RoutingTable p),
+  runningOpsTable :: TVar (RunningOpsTable p),
+  globalKTree     :: TVar (KTree p),
+  localPeer       :: p,
   localStore      :: TVar (M.Map Integer String)
 }
 
-newtype ServerState a = ServerState {
-  runSS:: ReaderT GlobalData IO a 
-} deriving (Monad, MonadIO, MonadReader GlobalData)
+newtype ServerState p a = ServerState {
+  runSS:: ReaderT (GlobalData p) IO a 
+} deriving (Monad, MonadIO, MonadReader (GlobalData p))
 
 -- runServer rt rot kt localId st = runReaderT (runSS st) (rt, rot, kt, localId)
 runServer gd st = runReaderT (runSS st) gd
@@ -88,7 +95,7 @@ newRunningLookup nid rs ps qs lookupId handlerFn =
 
 runningLookup lookupId = liftM (M.lookup lookupId) readRunningOpsT
 
-runningLookupDone:: Word64 -> ServerState (Maybe RunningOps)
+runningLookupDone:: Word64 -> ServerState p (Maybe (RunningOps p))
 runningLookupDone lookupId = atomicOnAsk askRunningOpsT (\rot -> do
   ro <- readTVar rot
   let val = M.lookup lookupId ro
@@ -96,11 +103,11 @@ runningLookupDone lookupId = atomicOnAsk askRunningOpsT (\rot -> do
     Nothing -> return Nothing
     Just wr -> modifyTVar (M.delete lookupId) rot >> return val )
 
-newWaitingReply:: Peer -> KadOp -> Word64 -> Word64 -> ServerState ()
+newWaitingReply:: p -> KadOp -> Word64 -> Word64 -> ServerState p ()
 newWaitingReply peer op msgId opId = 
   atomicOnAsk askRoutingT $ modifyTVar (M.insert msgId $ WaitingReply peer op opId)
 
-waitingReply:: Word64 -> KadOp -> Peer -> ServerState (Maybe Word64)
+waitingReply::(Eq p) => Word64 -> KadOp -> p -> ServerState p (Maybe Word64)
 waitingReply msgId op peer = atomicOnAsk askRoutingT (\trt -> do
   rt  <- readTVar trt
   case M.lookup msgId rt of

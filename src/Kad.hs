@@ -1,3 +1,5 @@
+{-# LANGUAGE NoMonomorphismRestriction #-} 
+
 module Kad 
   ( startNode, nodeLookup, valueLookup, store, 
     nodeLookupReceive, storeReceive, nodeLookupCallback, valueLookupCallback
@@ -20,35 +22,29 @@ import Debug.Trace
 
 import KTable
 import Globals
-import Comm
 
 -- Global parallelization constant
 alpha = 3
 
 -- Joins the network, knowing one existing peer, by doing a lookup on this
 -- node's id and refreshing all newly created buckets.
-startNode peer =
-  if (read (port peer) > 0)
-    then do
-      insertInKTree peer
-      me <- askLocalId
-      -- Node lookup on local id
-      nodeLookup (nodeId me) $ PeersHandler (\peers -> do
-        -- Node refresh on all buckets
-        kt <- readKTree
-        ids <- liftIO . mapM randomRIO $ kbucketsRange kt
-        forM ids (flip nodeLookup . PeersHandler $ const (return ()))
-        return () )
-    else return ()
+startNode peer = do
+  insertInKTree peer
+  me <- askLocalId
+  -- Node lookup on local id
+  nodeLookup (nodeId me) $ PeersHandler (\peers -> do
+    -- Node refresh on all buckets
+    kt <- readKTree
+    ids <- liftIO . mapM randomRIO $ kbucketsRange kt
+    forM ids (flip nodeLookup . PeersHandler $ const (return ()))
+    return () )
 
 -- Initiates a node lookup on the network. Starts with the k closest
 -- nodes known locally and gets closer using the nodes returned.
-nodeLookup:: Integer -> HandlerFn -> ServerState ()
 nodeLookup = genericLookup False
 
 -- Value lookup: pretty much like a node lookup except that if a node has the
 -- value in its local store, it returns it instead of the k closest nodes.
-valueLookup:: Integer -> HandlerFn -> ServerState ()
 valueLookup = genericLookup True
 
 genericLookup valL nid handlerFn = do
@@ -70,12 +66,10 @@ genericLookup valL nid handlerFn = do
 
 -- Stores a key / value pair by doing a node lookup and sending a store command
 -- to the closest nodes found
-store:: Integer -> String -> ServerState ()
 store key kdata = nodeLookup key $ PeersHandler (\peers -> (liftIO . putStrLn $ "Sending store to peers " ++ show peers) >> liftIO newUid >>= sendStore peers key kdata)
 
 -- Received a node lookup request, queries the KTable for the k closest and
 -- sends the information back.
-nodeLookupReceive:: Bool -> Word64 -> Integer -> Peer -> ServerState ()
 nodeLookupReceive valL msgId nid peer = do
   localVal <- lookupInStore nid
   if valL && isJust localVal
@@ -95,7 +89,6 @@ nodeLookupReceive valL msgId nid peer = do
 -- TODO timer
 -- TODO alpha round fails to find closer node
 -- TODO lookup should be read and written in the same atomically
-nodeLookupCallback :: Bool -> Word64 -> Peer -> [Peer] -> ServerState()
 nodeLookupCallback valL opId peer nodes = do
   debug $ "Received a node lookup callback from peer " ++ show peer ++ " with nodes " ++ show nodes
   me  <- askLocalId
@@ -128,7 +121,6 @@ nodeLookupCallback valL opId peer nodes = do
 
 -- Received the result of a value lookup callback, the string received is the
 -- expected value.
-valueLookupCallback :: Word64 -> Peer -> String -> ServerState()
 valueLookupCallback opId peer val = do
   rld <- runningLookupDone opId
   case rld of
@@ -139,7 +131,6 @@ valueLookupCallback opId peer val = do
 
 -- Responds to a store call by insert the key/value received in the local storage.
 -- TODO peer could also respond with 'store full', what do we do?
-storeReceive:: Word64 -> Integer -> String -> Peer -> ServerState ()
 storeReceive msgId key val peer = (liftIO . putStrLn $ "local store for " ++ show key ++ " " ++ show val) >> insertInStore key val
 
 -- Pick the "best" alpha nodes out of the k selected for lookup. For now we only
@@ -155,7 +146,6 @@ closestNode pivot p1 p2 =
   in compare d1 d2
 
 -- K nodes closest to the pivot by the xor metric
-closestNodes :: Integer -> [Peer] -> [Peer]
 closestNodes pivot = take kdepth . sortBy (closestNode pivot)
 
 debug s = liftM ((++ " " ++ s) . show . nodeId) askLocalId >>= liftIO . debugM "Kad"
