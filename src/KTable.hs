@@ -53,10 +53,10 @@ kinsert pivot kt peer = update_closest_bucket kt nid insertOrSplit
         then KLeaf kb
         else if S.length kb < kdepth
                then KLeaf $ kb S.|> peer
-               else if pos == 0 || (nid `nxor` pivot > 2 ^ (pos+1))
+               else if pos == 0 || (nid `nxor` pivot > 2 ^ pos)
                       -- TODO before dropping it, check that it wouldn't be a good replacement for one of the existing bucket node
                       then KLeaf kb 
-                      else traverseKTree KNode KNode pos (splitBucket kb pos) nid insertOrSplit
+                      else traverseKTree KNode KNode (pos-1) (splitBucket kb (pos-1)) nid insertOrSplit
 
     -- TODO logic for highly unbalanced trees
     splitBucket seq pos = pairToNode $ F.foldl separateVals (S.empty,S.empty) seq
@@ -116,5 +116,5 @@ traverseKTree consRight consLeft pos (KNode left right) nid fn =
   if testBit nid pos 
     then consRight left (traverseKTree consRight consLeft (pos-1) right nid fn)
     else consLeft (traverseKTree consRight consLeft (pos-1) left nid fn) right
-traverseKTree _ _ pos kl@(KLeaf kb) nid fn = fn pos kb
+traverseKTree _ _ pos (KLeaf kb) nid fn = fn (pos+1) kb
 
