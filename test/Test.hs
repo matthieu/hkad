@@ -1,17 +1,22 @@
 {-# LANGUAGE TypeSynonymInstances #-} 
 
-import KTable
-
 import Test.QuickCheck.Parallel
 -- import Test.QuickCheck.Batch
 import Test.QuickCheck
+import Test.HUnit hiding (Node)
 
 import qualified Data.Sequence as S
+import qualified Data.Map as M
 import qualified Data.Foldable as F
 import Data.List(nub)
 import Data.Bits
+import Control.Concurrent.STM
 import System.Random(randomRIO)
 import Debug.Trace
+
+import KTable
+import Globals
+import Kad
 
 -- options = TestOptions
 --   { no_of_tests         = 200
@@ -26,13 +31,14 @@ import Debug.Trace
 --     , run prop_kclosest_k ]
 
 
-main =
-  pRun 4 500  [("buckets max", pDet prop_max_k_bucket)
+main = do
+  pRun 4 150  [("buckets max", pDet prop_max_k_bucket)
             , ("buckets bits position", pDet prop_all_proper_bits)
             , ("no duplicate", pDet prop_no_duplicates)
             , ("k retrieval", pDet prop_kclosest_k)
             , ("kclosest close", pDet prop_kclosest_close)
             , ("kbucketsRange length", pDet prop_kbucketsRange_length)]
+  runTestTT $ TestList [testStartNode]
 
 --
 -- Quickcheck definitions and property checkers for KTree
@@ -94,3 +100,35 @@ not_closest kt peer = filter (\x -> (nodeId x) `xor` nid <= kmaxDist && x `notEl
 
 prop_kbucketsRange_length :: KTree TestNode -> Bool
 prop_kbucketsRange_length kt = F.foldr (const (+1)) 0 kt == length (kbucketsRange kt)
+
+
+--
+-- Kad
+--
+
+data TestPeer = TP { testPeerId :: Integer }
+  deriving (Show, Eq, Ord)
+
+instance Node TestPeer where
+  nodeId = testPeerId
+
+instance Peer TestPeer where
+  sendLookup peers nid lid b = insertInStore 0 (show peers)
+  sendLookupReply p ps lid b = insertInStore 1 (show p ++ " -> " ++ show ps)
+  sendStore peers key val sid = insertInStore 2 (show peers ++ " " ++ show key ++ " / " ++ val)
+  sendValueReply p val vid = insertInStore 3 (show p ++ " " ++ show val)
+
+
+
+testStartNode = TestCase $ do
+  trt  <- newTVarIO M.empty
+  trot <- newTVarIO M.empty
+  tkt  <- newTVarIO $ kbleaf S.empty
+  ls   <- newTVarIO M.empty
+  let gd   = GlobalData trt trot tkt (TP 100) ls
+  s <- runServer gd startAndStore
+  print s
+  if M.member 0 s then return () else assertFailure "Start failed"
+
+  where startAndStore = startNode (TP 200) >> readStore
+

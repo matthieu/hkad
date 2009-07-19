@@ -80,7 +80,7 @@ nodeLookupReceive valL msgId nid peer = do
       ktree <- readKTree
       let close = kclosest ktree nid
       debug $ "Replying to node lookup for nid " ++ show nid ++ " from peer " ++ show peer ++ " with nodes " ++ show close
-      sendLookupReply valL peer close msgId
+      sendLookupReply peer close msgId valL
 
 -- Received the result of a lookup request, stores the k nodes received
 -- and updates the status of the node lookup, initiates a new alpha lookup

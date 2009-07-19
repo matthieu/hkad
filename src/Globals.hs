@@ -5,7 +5,7 @@ module Globals (
     Peer(..),
     RunningOps(..), ServerState, KadOp(..), GlobalData(..), HandlerFn(..),
     runServer, askRoutingT, askRunningOpsT, askKTree, readKTree, askLocalId,
-    newRunningLookup, runningLookup, runningLookupDone, 
+    newRunningLookup, runningLookup, runningLookupDone, readStore, 
     newWaitingReply, waitingReply, newUid, insertInKTree,
     insertInStore, lookupInStore, deleteInStore,
     modifyTVar
@@ -23,7 +23,7 @@ import KTable
 
 class Peer p where
   sendLookup      :: [p] -> Integer -> Word64 -> Bool -> ServerState p ()
-  sendLookupReply :: Bool -> p -> [p] -> Word64 -> ServerState p () 
+  sendLookupReply :: p -> [p] -> Word64 -> Bool -> ServerState p () 
   sendStore       :: [p] -> Integer -> String -> Word64 -> ServerState p ()
   sendValueReply  :: p -> String -> Word64 -> ServerState p ()
 
@@ -69,6 +69,7 @@ askLocalStore = liftM localStore ask
 readRoutingT = do { rt <- askRoutingT; liftIO . atomically $ readTVar rt }
 readRunningOpsT = do { rot <- askRunningOpsT; liftIO . atomically $ readTVar rot }
 readKTree = do { kt <- askKTree; liftIO . atomically $ readTVar kt }
+readStore = do { s <- askLocalStore; liftIO . atomically $ readTVar s }
 
 modifyTVar :: (a -> a) -> TVar a -> STM ()
 modifyTVar f tv = readTVar tv >>= writeTVar tv . f

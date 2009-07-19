@@ -74,7 +74,7 @@ sendLookupIP peers nid lookupId valL = forM peers (\p -> do
 
 -- Sends the reply to a node lookup query, sending k nodes and reproducing the
 -- received message id.
-sendLookupReplyIP valL peer nodes msgId = do
+sendLookupReplyIP peer nodes msgId valL = do
   me <- askLocalId
   let msg = buildHeader (if valL then ValueLookupReplyOp else NodeLookupReplyOp) msgId me ++ serPeers nodes
   liftIO $ sendToPeer msg peer
