@@ -3,10 +3,11 @@
 
 module Globals (
     Peer(..),
-    RunningOps(..), ServerState, KadOp(..), GlobalData(..), HandlerFn(..),
+    RunningOps(..), ServerState, KadOp(..), GlobalData(..), HandlerFn(..), WaitingReply(..),
     runServer, askRoutingT, askRunningOpsT, askKTree, readKTree, askLocalId,
+    readRoutingT, readRunningOpsT,
     newRunningLookup, runningLookup, runningLookupDone, readStore, 
-    newWaitingReply, waitingReply, newUid, insertInKTree,
+    newWaitingReply, waitingReply, nrandoms, newUid, insertInKTree,
     insertInStore, lookupInStore, deleteInStore,
     modifyTVar
   ) where
@@ -14,7 +15,7 @@ module Globals (
 import Data.Word
 import Control.Monad.Reader
 import Control.Concurrent.STM
-import System.Random
+import Control.Applicative((<$>))
 
 import qualified Data.Map as M
 import Debug.Trace
@@ -26,6 +27,8 @@ class Peer p where
   sendLookupReply :: p -> [p] -> Word64 -> Bool -> ServerState p () 
   sendStore       :: [p] -> Integer -> String -> Word64 -> ServerState p ()
   sendValueReply  :: p -> String -> Word64 -> ServerState p ()
+  sendToPeer      :: String -> p -> IO ()
+  serPeer         :: p -> String
 
 type RoutingTable p = M.Map Word64 (WaitingReply p)
 
@@ -50,21 +53,22 @@ data GlobalData p = GlobalData {
   runningOpsTable :: TVar (RunningOpsTable p),
   globalKTree     :: TVar (KTree p),
   localPeer       :: p,
-  localStore      :: TVar (M.Map Integer String)
+  localStore      :: TVar (M.Map Integer String),
+  randoms         :: TVar [Integer]
 }
 
 newtype ServerState p a = ServerState {
   runSS:: ReaderT (GlobalData p) IO a 
-} deriving (Monad, MonadIO, MonadReader (GlobalData p))
+} deriving (Monad, MonadIO, MonadReader (GlobalData p), Functor)
 
 -- runServer rt rot kt localId st = runReaderT (runSS st) (rt, rot, kt, localId)
 runServer gd st = runReaderT (runSS st) gd
 
-askRoutingT = liftM routingTable ask
-askRunningOpsT = liftM runningOpsTable ask
-askKTree = liftM globalKTree ask
-askLocalId = liftM localPeer ask
-askLocalStore = liftM localStore ask
+askRoutingT = routingTable <$> ask
+askRunningOpsT = runningOpsTable <$> ask
+askKTree = globalKTree <$> ask
+askLocalId = localPeer <$> ask
+askLocalStore = localStore <$> ask
 
 readRoutingT = do { rt <- askRoutingT; liftIO . atomically $ readTVar rt }
 readRunningOpsT = do { rot <- askRunningOpsT; liftIO . atomically $ readTVar rot }
@@ -74,13 +78,21 @@ readStore = do { s <- askLocalStore; liftIO . atomically $ readTVar s }
 modifyTVar :: (a -> a) -> TVar a -> STM ()
 modifyTVar f tv = readTVar tv >>= writeTVar tv . f
 
+nrandoms n = do 
+  rst <- randoms <$> ask
+  liftIO . atomically $ do
+    rs <- readTVar rst
+    let nrs = take n rs
+    writeTVar rst (drop n rs)
+    return $ map fromInteger nrs
+
 -- Helper to execute atomically a ST action on a value asked in ServerState
 atomicOnAsk :: (MonadIO m) => m a -> (a -> STM b) -> m b
 atomicOnAsk asked action = asked >>= liftIO . atomically . action
 
 insertInStore k v = atomicOnAsk askLocalStore (modifyTVar $ M.insert k v)
 
-lookupInStore k = liftM (M.lookup k) $ atomicOnAsk askLocalStore readTVar 
+lookupInStore k = M.lookup k <$> atomicOnAsk askLocalStore readTVar 
 
 deleteInStore k = atomicOnAsk askLocalStore (\lst -> do
   ls  <- readTVar lst
@@ -94,7 +106,7 @@ newRunningLookup nid rs ps qs lookupId handlerFn =
   let nrl = RunningLookup nid rs ps qs handlerFn
   in atomicOnAsk askRunningOpsT $ modifyTVar (M.insert lookupId nrl)
 
-runningLookup lookupId = liftM (M.lookup lookupId) readRunningOpsT
+runningLookup lookupId = M.lookup lookupId <$> readRunningOpsT
 
 runningLookupDone:: Word64 -> ServerState p (Maybe (RunningOps p))
 runningLookupDone lookupId = atomicOnAsk askRunningOpsT (\rot -> do
@@ -123,6 +135,6 @@ insertInKTree peer = do
   lid <- askLocalId
   atomicOnAsk askKTree $ modifyTVar (flip (kinsert $ nodeId lid) $ peer)
 
-newUid:: IO Word64
-newUid = liftM fromInteger $ randomRIO (0, 2^64 - 1)
+newUid:: (ServerState p) Word64
+newUid = fromInteger <$> head <$> nrandoms 1
 

@@ -10,8 +10,10 @@ import Control.Concurrent(forkIO,threadDelay)
 import Control.Concurrent.STM
 import Control.Monad.Trans(liftIO)
 import Control.Monad(forM)
+import Control.Applicative((<$>))
 
 import System.Log.Logger
+import System.Random
 import Debug.Trace
 
 import KTable
@@ -26,8 +28,10 @@ newNode myPort otherPort = do
   trot <- newTVarIO M.empty
   tkt  <- newTVarIO $ kbleaf S.empty
   ls   <- newTVarIO M.empty
+  rs   <- randomRs (0, 2^64 - 1) <$> newStdGen
+  rsv  <- newTVarIO rs
   let myId = intSHA1 myPort
-  let gd   = GlobalData trt trot tkt (IPPeer "127.0.0.1" (show myPort) myId) ls
+  let gd   = GlobalData trt trot tkt (IPPeer "127.0.0.1" (show myPort) myId) ls rsv
   -- nodeId = sha1 port
   debug $ "Starting on port " ++ show myPort
   forkIO $ runServer gd (start myPort otherPort)

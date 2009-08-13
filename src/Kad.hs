@@ -2,7 +2,8 @@
 
 module Kad 
   ( startNode, nodeLookup, valueLookup, store, 
-    nodeLookupReceive, storeReceive, nodeLookupCallback, valueLookupCallback
+    nodeLookupReceive, storeReceive, nodeLookupCallback, valueLookupCallback,
+    fromCharArray, toCharArray, buildHeader, serPeers
   ) where
 
 import Prelude hiding (error)
@@ -11,10 +12,13 @@ import Data.Word
 import Data.Maybe
 import Data.List(sortBy, (\\), delete, nub)
 import Data.Bits
+import Data.Char(chr,ord)
+import Data.List (genericDrop,unfoldr,intercalate)
 
 import Control.Monad(liftM, liftM2, liftM3, forM)
 import Control.Concurrent.STM
 import Control.Monad.Trans(liftIO)
+import Control.Arrow(second)
 
 import System.Random
 import System.Log.Logger
@@ -49,7 +53,7 @@ valueLookup = genericLookup True
 
 genericLookup valL nid handlerFn = do
   debug $ "Starting a node lookup for node " ++ show nid
-  uid   <- liftIO newUid
+  uid   <- newUid
   ktree <- readKTree
 
   -- k closest elements in the k tree
@@ -64,9 +68,36 @@ genericLookup valL nid handlerFn = do
       -- sending a lookup on the alpha nodes picked
       sendLookup ps nid uid valL
 
+genericLookup2 valL nid handlerFn = do
+  debug $ "Starting a node lookup for node " ++ show nid
+  uids <- nrandoms (alpha + 1)
+  let (lookupId, msgIds) = splitAt 1 uids
+  ktree <- readKTree
+  me    <- askLocalId
+  routeT <- readRoutingT
+  opsT <- readRunningOpsT
+
+  let (msgs, nopsT, nrouteT) = prepareLookups valL nid handlerFn opsT routeT me ktree (head lookupId) msgIds
+  -- TODO update maps
+  liftIO . mapM (uncurry sendToPeer) $ msgs
+
+prepareLookups valL nid handlerFn opsT routeT me ktree lookupId msgIds = (mps, newOpsT, newRouteT)  
+  where (mps, newRouteT) = foldr (\(mid,p) acc -> 
+          comb (prepareLookup valL nid p routeT me lookupId mid) acc) ([], routeT) (zip msgIds ps)
+        comb (mp, rt) (arr, ort) = (mp:arr, rt)
+        kc = kclosest ktree nid
+        ps = pickAlphaNodes kc
+        newOpsT = M.insert lookupId (RunningLookup nid kc ps [] handlerFn) opsT
+
+prepareLookup valL nid peer routeT me lookupId msgId = ((msg, peer), newRouteT)
+  where msg = buildHeader lookpOp msgId me ++ toCharArray nid 20
+        newRouteT = M.insert msgId (WaitingReply peer replyOp lookupId) routeT
+        lookpOp = if valL then ValueLookupOp else NodeLookupOp
+        replyOp = if valL then ValueLookupReplyOp else NodeLookupReplyOp
+
 -- Stores a key / value pair by doing a node lookup and sending a store command
 -- to the closest nodes found
-store key kdata = nodeLookup key $ PeersHandler (\peers -> (liftIO . putStrLn $ "Sending store to peers " ++ show peers) >> liftIO newUid >>= sendStore peers key kdata)
+store key kdata = nodeLookup key $ PeersHandler (\peers -> (liftIO . putStrLn $ "Sending store to peers " ++ show peers) >> newUid >>= sendStore peers key kdata)
 
 -- Received a node lookup request, queries the KTable for the k closest and
 -- sends the information back.
@@ -138,7 +169,7 @@ storeReceive msgId key val peer = (liftIO . putStrLn $ "local store for " ++ sho
 -- in Vivaldi coordinates.
 pickAlphaNodes kc =  
   let idx = length kc - alpha
-  in snd $ splitAt idx kc
+  in drop idx kc
 
 closestNode pivot p1 p2 = 
   let d1 = nodeId p1 `xor` pivot
@@ -150,4 +181,38 @@ closestNodes pivot = take kdepth . sortBy (closestNode pivot)
 
 debug s = liftM ((++ " " ++ s) . show . nodeId) askLocalId >>= liftIO . debugM "Kad"
 error s = liftM ((++ " " ++ s) . show . nodeId) askLocalId >>= liftIO . errorM "Kad"
+
+-- Utility functions to serialize messages
+--
+
+buildHeader optype msgId sender = 
+  (chr 1) : optypeStr : toCharArray (toInteger msgId) 8 ++ serPeer sender
+  where optypeStr = case optype of
+                      PingOp              -> chr 1
+                      PingReplyOp         -> chr 2
+                      NodeLookupOp        -> chr 3
+                      NodeLookupReplyOp   -> chr 4
+                      StoreOp             -> chr 5
+                      StoreReplyOp        -> chr 6
+                      ValueLookupOp       -> chr 7
+                      ValueLookupReplyOp  -> chr 8
+
+-- Convert an integer to a string of n bytes
+toCharArray:: Integer -> Int -> [Char]
+toCharArray num depth = map (chr . fromInteger) (toBytes num $ toInteger depth)
+
+-- Converts a string to its numeric value by considering that each character is a
+-- byte in a n byte number
+fromCharArray :: (Bits a) => [Char] -> a
+fromCharArray str = foldl (\acc ch -> shift acc 8 + fromIntegral (ord ch)) 0 str
+
+-- Serializes peers
+serPeers  = concat . map serPeer
+
+-- Decomposes a number into its successive byte values or, said differently, converts
+-- a number to base 2^8.
+toBytes :: Integer -> Integer -> [Integer]
+toBytes num depth = unfoldr byteMod (num,depth-1)
+  where byteMod (num,exp) = let (d,m) = divMod num (2^(exp*8))
+                            in if exp < 0 then Nothing else Just (d, (m,exp-1))
 
